@@ -131,31 +131,33 @@ export async function completeJob(
 
   const now = new Date();
 
-  await prisma.$transaction([
-    prisma.job.update({
-      where: { id: jobId },
+  // Atomic: include job ownership + status in the WHERE clause so a concurrent
+  // second completion cannot increment totalJobs/totalEarnings twice.
+  await prisma.$transaction(async (tx) => {
+    const updated = await tx.job.updateMany({
+      where: { id: jobId, workerId: workerProfile.id, status: job.status },
       data: {
         status: "COMPLETED",
         completedAt: now,
         finalPrice: job.estimatedPrice,
         ...(afterPhotoUrl ? { afterPhotoUrl } : {}),
       },
-    }),
-    // Update worker stats
-    prisma.workerProfile.update({
+    });
+    if (updated.count === 0) return; // already completed by a concurrent request
+
+    await tx.workerProfile.update({
       where: { id: workerProfile.id },
       data: {
-        totalJobs:      { increment: 1 },
-        totalEarnings:  { increment: job.estimatedPrice },
+        totalJobs:     { increment: 1 },
+        totalEarnings: { increment: job.estimatedPrice },
       },
-    }),
-    // Create payment record
-    prisma.payment.upsert({
-      where: { jobId },
+    });
+    await tx.payment.upsert({
+      where:  { jobId },
       create: { jobId, amount: job.estimatedPrice, status: "PENDING" },
       update: {},
-    }),
-  ]);
+    });
+  });
 
   await notifyCustomer(
     job.customerId,
@@ -176,9 +178,12 @@ export async function cancelJob(jobId: string): Promise<ActionResult> {
   const job = await prisma.job.findUnique({ where: { id: jobId } });
   if (!job) return { ok: false, error: "Job not found.", code: "SERVER_ERROR" };
 
-  // Only the customer who owns it can cancel
+  // Customers can only cancel their own jobs; admins can cancel any job.
   if (session.userType === "CUSTOMER" && job.customerId !== session.userId) {
     return { ok: false, error: "Not authorised.", code: "SERVER_ERROR" };
+  }
+  if (session.userType === "WORKER") {
+    return { ok: false, error: "Workers cannot cancel jobs.", code: "SERVER_ERROR" };
   }
 
   if (!canTransition(job.status, "CANCELLED")) {

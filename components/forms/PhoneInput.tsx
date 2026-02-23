@@ -68,10 +68,11 @@ const PhoneInput = React.forwardRef<HTMLInputElement, PhoneInputProps>(
       if (e.ctrlKey || e.metaKey) return;
       // Allow: Shift+Insert paste
       if (e.shiftKey && e.key === "Insert") return;
-      // Allow: backspace, delete, tab, escape, enter, arrows
+      // Allow: backspace, delete, tab, escape, enter, arrows, Home, End
       const allowed = [
         "Backspace", "Delete", "Tab", "Escape", "Enter",
         "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown",
+        "Home", "End",
       ];
       if (allowed.includes(e.key)) return;
       // Block non-numeric

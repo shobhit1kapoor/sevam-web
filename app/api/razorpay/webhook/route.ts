@@ -63,14 +63,19 @@ export async function POST(req: NextRequest) {
     if (razorpayOrderId) {
       const payment = await prisma.payment.findFirst({ where: { razorpayOrderId } });
       if (payment) {
-        try {
-          await prisma.payment.update({
-            where: { id: payment.id },
-            data:  { status: "FAILED" },
-          });
-        } catch (err) {
-          console.error("[Razorpay Webhook] DB update failed for payment.failed:", err);
-          return NextResponse.json({ error: "Database error" }, { status: 500 });
+        // Never downgrade a payment that already succeeded.
+        if (payment.status === "SUCCESS") {
+          console.warn("[Razorpay Webhook] Ignoring payment.failed for already-captured order:", razorpayOrderId);
+        } else {
+          try {
+            await prisma.payment.update({
+              where: { id: payment.id },
+              data:  { status: "FAILED" },
+            });
+          } catch (err) {
+            console.error("[Razorpay Webhook] DB update failed for payment.failed:", err);
+            return NextResponse.json({ error: "Database error" }, { status: 500 });
+          }
         }
       }
     }

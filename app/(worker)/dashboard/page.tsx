@@ -19,22 +19,26 @@ export default function WorkerDashboardPage() {
 
   useEffect(() => {
     (async () => {
-      const result = await getWorkerEarnings();
-      if (result.ok) {
-        setData(result.data);
-        // Sync online status from server state
-        // (result.data.stats contains isOnline from WorkerProfile if present)
+      try {
+        const result = await getWorkerEarnings();
+        if (result.ok) {
+          setData(result.data);
+        }
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     })();
   }, []);
 
   async function handleToggleOnline() {
     setToggling(true);
     const next = !online;
-    const result = await setWorkerOnlineStatus(next);
-    if (result.ok) setOnline(next);
-    setToggling(false);
+    try {
+      const result = await setWorkerOnlineStatus(next);
+      if (result.ok) setOnline(next);
+    } finally {
+      setToggling(false);
+    }
   }
 
   if (loading) return <PageSpinner />;

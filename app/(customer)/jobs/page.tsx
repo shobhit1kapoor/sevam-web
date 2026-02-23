@@ -54,9 +54,9 @@ export default function CustomerJobsPage() {
     <div className="space-y-5 animate-fade-in">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold text-foreground">My Jobs</h1>
-        <Link href="/">
-          <Button size="sm">+ New Job</Button>
-        </Link>
+        <Button size="sm" asChild>
+          <Link href="/">+ New Job</Link>
+        </Button>
       </div>
 
       {/* Status filter tabs */}
@@ -141,14 +141,14 @@ function JobCard({ job }: { job: JobSummary }) {
         {(isActive || needsPayment) && (
           <div className="flex gap-2 pt-1">
             {isActive && (
-              <Link href={`/track/${job.id}`} className="flex-1">
-                <Button size="sm" variant="outline" className="w-full">Track</Button>
-              </Link>
+              <Button size="sm" variant="outline" className="w-full flex-1" asChild>
+                <Link href={`/track/${job.id}`}>Track</Link>
+              </Button>
             )}
             {needsPayment && (
-              <Link href={`/payment/${job.id}`} className="flex-1">
-                <Button size="sm" className="w-full">Pay Now</Button>
-              </Link>
+              <Button size="sm" className="w-full flex-1" asChild>
+                <Link href={`/payment/${job.id}`}>Pay Now</Link>
+              </Button>
             )}
           </div>
         )}

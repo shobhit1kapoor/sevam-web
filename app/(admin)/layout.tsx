@@ -24,7 +24,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     }
   }, [user, isLoading, router]);
 
-  if (isLoading || !user) return <PageSpinner />;
+  if (isLoading || !user || user.userType !== "ADMIN") return <PageSpinner />;
 
   return (
     <div className="flex min-h-screen bg-background">

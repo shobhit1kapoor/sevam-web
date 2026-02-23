@@ -48,7 +48,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           aria-invalid={Boolean(error || overLimit)}
           aria-describedby={
             error ? `${textareaId}-error` :
-            overLimit ? `${textareaId}-error` : undefined
+            overLimit ? `${textareaId}-counter` : undefined
           }
           className={cn(
             "w-full rounded-xl border border-border bg-input",
@@ -74,6 +74,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
 
           {maxChars && (
             <span
+              id={`${textareaId}-counter`}
               className={cn(
                 "text-xs tabular-nums",
                 overLimit ? "text-error" : "text-muted"

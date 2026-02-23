@@ -23,16 +23,21 @@ export default function TrackJobPage() {
   // Fetch job
   const load = useCallback(async () => {
     setLoadError(null);
-    const result = await getJobDetails(id);
-    if (result.ok) {
-      setJob(result.data);
-      if (result.data.workerLat != null && result.data.workerLng != null) {
-        setWorker({ lat: result.data.workerLat, lng: result.data.workerLng });
+    try {
+      const result = await getJobDetails(id);
+      if (result.ok) {
+        setJob(result.data);
+        if (result.data.workerLat != null && result.data.workerLng != null) {
+          setWorker({ lat: result.data.workerLat, lng: result.data.workerLng });
+        }
+      } else {
+        setLoadError(result.error ?? "Failed to load job");
       }
-    } else {
-      setLoadError(result.error ?? "Failed to load job");
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Failed to load job");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
