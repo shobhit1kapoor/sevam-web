@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/db/prisma";
 import { getSession } from "@/lib/auth/session";
 import { sendPushNotification } from "@/lib/utils/notifications";
+import { Prisma } from "@/lib/generated/prisma/client";
 import type { ActionResult } from "@/types/auth";
 
 // ─── B16a: Raise a dispute ────────────────────────────────────────────────────
@@ -38,15 +39,29 @@ export async function raiseDispute(
     return { ok: false, error: "A dispute is already open for this job.", code: "SERVER_ERROR" };
   }
 
-  const [dispute] = await prisma.$transaction([
-    prisma.jobDispute.create({
-      data: { jobId, raisedById: session.userId, reason: reason.trim(), status: "OPEN" },
-    }),
-    prisma.job.update({
-      where: { id: jobId },
-      data:  { status: "DISPUTED" },
-    }),
-  ]);
+  const transactionResult = await (async () => {
+    try {
+      return await prisma.$transaction([
+        prisma.jobDispute.create({
+          data: { jobId, raisedById: session.userId, reason: reason.trim(), status: "OPEN" },
+        }),
+        prisma.job.update({
+          where: { id: jobId },
+          data:  { status: "DISPUTED" },
+        }),
+      ]);
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+        return null;
+      }
+      throw err;
+    }
+  })();
+
+  if (!transactionResult) {
+    return { ok: false, error: "A dispute is already open for this job.", code: "SERVER_ERROR" };
+  }
+  const [dispute] = transactionResult;
 
   // Notify admin (create in-app notification — admins can poll)
   const admins = await prisma.user.findMany({
@@ -161,11 +176,14 @@ export async function listDisputes(
   return { ok: true, data: { disputes } };
 }
 
+const MAX_DISPUTE_LIMIT = 100;
+
 async function fetchDisputes(
   status: "OPEN" | "RESOLVED",
   limit = 50,
   cursor?: string
 ) {
+  const clampedLimit = Math.max(1, Math.min(limit, MAX_DISPUTE_LIMIT));
   return prisma.jobDispute.findMany({
     where:   { status },
     include: {
@@ -173,7 +191,7 @@ async function fetchDisputes(
       job:      { select: { id: true, type: true, address: true } },
     },
     orderBy: { createdAt: "desc" },
-    take:    limit,
+    take:    clampedLimit,
     ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
   });
 }

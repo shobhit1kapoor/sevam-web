@@ -9,12 +9,13 @@ export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextArea
 }
 
 export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
-  ({ className, label, error, maxChars, id, value, onChange, ...props }, ref) => {
+  ({ className, label, error, maxChars, id, value, onChange, defaultValue, ...props }, ref) => {
     const reactId = React.useId();
     const textareaId = id ?? label?.toLowerCase().replace(/\s+/g, "-") ?? reactId;
 
-    // Support uncontrolled mode for char counter
-    const [internalValue, setInternalValue] = React.useState("");
+    // Support uncontrolled mode for char counter.
+    // Initialize from defaultValue so the counter is correct from the first render.
+    const [internalValue, setInternalValue] = React.useState(() => String(defaultValue ?? ""));
     const isControlled = value !== undefined;
     const charCount = isControlled
       ? (typeof value === "string" ? value.length : 0)

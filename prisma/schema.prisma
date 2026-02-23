@@ -7,7 +7,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
@@ -82,7 +81,7 @@ model WorkerProfile {
   isApproved      Boolean   @default(false)
   rating          Float     @default(0)
   totalJobs       Int       @default(0)
-  totalEarnings   Float     @default(0)
+  totalEarnings   Decimal   @default(0)
 
   lat             Float?
   lng             Float?
@@ -119,8 +118,8 @@ model Job {
   lat            Float
   lng            Float
 
-  estimatedPrice Float
-  finalPrice     Float?
+  estimatedPrice Decimal
+  finalPrice     Decimal?
 
   acceptedAt     DateTime?
   startedAt      DateTime?
@@ -148,7 +147,7 @@ model Payment {
   jobId               String        @unique
   job                 Job           @relation(fields: [jobId], references: [id])
 
-  amount              Float
+  amount              Decimal
   razorpayOrderId     String?
   razorpayPaymentId   String?
   razorpaySignature   String?

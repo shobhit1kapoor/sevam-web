@@ -42,15 +42,19 @@ export async function sendSms(to: string, body: string): Promise<SmsResult> {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({ To: to, From: TWILIO_PHONE_NUMBER, Body: body }),
+      signal: AbortSignal.timeout(10_000), // 10 s hard timeout
     });
 
-    const json = await res.json();
+    // Safely parse the body — Twilio may return HTML on infrastructure errors
+    const isJson = res.headers.get("content-type")?.includes("application/json");
+    const json = isJson ? await res.json().catch(() => null) : null;
+    const text = !isJson ? await res.text().catch(() => "") : null;
 
     if (!res.ok) {
-      return { ok: false, error: json?.message ?? `Twilio error ${res.status}` };
+      return { ok: false, error: json?.message ?? text ?? `Twilio error ${res.status}` };
     }
 
-    return { ok: true, sid: json.sid };
+    return { ok: true, sid: json?.sid };
   } catch (err) {
     // Log only a safe reference, not the full error which may contain credentials.
     const message = err instanceof Error ? err.message : "Unknown SMS error";

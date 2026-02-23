@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { getWorkerEarnings } from "@/server/actions/workers/worker-dashboard";
 import { Card, CardContent, PageSpinner } from "@/components/ui";
 import { formatPrice } from "@/lib/utils/pricing";
@@ -42,6 +42,7 @@ export default function EarningsPage() {
 
   const stats = data?.stats;
   const daily = data?.daily ?? [];
+  const reversedDaily = useMemo(() => [...daily].reverse(), [daily]);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -72,7 +73,7 @@ export default function EarningsPage() {
                 </tr>
               </thead>
               <tbody>
-                {[...daily].reverse().map((row) => (
+                {reversedDaily.map((row) => (
                   <EarningsRow key={row.date} row={row} />
                 ))}
               </tbody>

@@ -75,9 +75,9 @@ export async function getCustomers(
     return { ok: false, error: "Admin access required.", code: "SERVER_ERROR" };
   }
 
-  // Validate and clamp pagination parameters
-  const safePage  = Math.max(1, Math.floor(page));
-  const safeLimit = Math.min(100, Math.max(1, Math.floor(limit)));
+  // Validate and clamp pagination parameters (guard against NaN/Infinity inputs)
+  const safePage  = Number.isFinite(page)  ? Math.max(1, Math.floor(page))                  : 1;
+  const safeLimit = Number.isFinite(limit) ? Math.min(100, Math.max(1, Math.floor(limit))) : 30;
   const skip = (safePage - 1) * safeLimit;
 
   const [users, total] = await prisma.$transaction([

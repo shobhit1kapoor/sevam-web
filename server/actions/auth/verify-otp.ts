@@ -122,6 +122,10 @@ export async function verifyOtp(
     ]);
 
     // ── 5. Mint session + set cookies + audit log ──────────────────────
+    // Defensive: ensure the DB value is a recognised UserType before casting.
+    if (!["CUSTOMER", "WORKER", "ADMIN"].includes(user.userType)) {
+      return { ok: false, error: "Invalid account type.", code: "SERVER_ERROR" };
+    }
     const sessionPayload: SessionPayload = {
       userId: user.id,
       phone: user.phone,

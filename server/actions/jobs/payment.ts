@@ -27,7 +27,7 @@ export async function createPaymentOrder(
     return { ok: false, error: "This job has already been paid for.", code: "SERVER_ERROR" };
   }
 
-  const amountPaise = Math.round((job.finalPrice ?? job.estimatedPrice) * 100);
+  const amountPaise = Math.round(Number(job.finalPrice ?? job.estimatedPrice) * 100);
 
   try {
     const razorpay = getRazorpay();

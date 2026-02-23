@@ -46,7 +46,7 @@ export default function ActiveJobPage() {
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
     };
-  }, [job?.id]);
+  }, [job?.id, job?.status]);
 
   async function handleStart() {
     if (!job) return;

@@ -5,6 +5,7 @@ import { getAnalytics, type AnalyticsSummary } from "@/server/actions/admin/get-
 import { getWorkers, type WorkerRow } from "@/server/actions/admin/get-users";
 import { listDisputes } from "@/server/actions/disputes/dispute-actions";
 import { resolveDispute } from "@/server/actions/disputes/dispute-actions";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle, PageSpinner, Button } from "@/components/ui";
 import { Badge } from "@/components/ui/badge";
 import { formatPrice } from "@/lib/utils/pricing";
@@ -114,9 +115,9 @@ export default function AdminAnalyticsPage() {
                       ))}
                     </div>
                   </div>
-                  <a href="/admin/users">
+                  <Link href="/users">
                     <Button size="sm" variant="outline">Review</Button>
-                  </a>
+                  </Link>
                 </div>
               ))
             )}

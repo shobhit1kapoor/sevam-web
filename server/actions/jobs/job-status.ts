@@ -9,12 +9,14 @@ import type { JobStatus } from "@/lib/generated/prisma/client";
 // ─── State machine ────────────────────────────────────────────────────────────
 //  PENDING → ACCEPTED → IN_PROGRESS → COMPLETED
 //  PENDING / ACCEPTED → CANCELLED (by customer or admin)
-//  IN_PROGRESS / COMPLETED → DISPUTED
+//  IN_PROGRESS → DISPUTED
+//  COMPLETED → DISPUTED
 
 const VALID_TRANSITIONS: Partial<Record<JobStatus, JobStatus[]>> = {
   PENDING:     ["ACCEPTED", "CANCELLED"],
   ACCEPTED:    ["IN_PROGRESS", "CANCELLED"],
   IN_PROGRESS: ["COMPLETED", "DISPUTED"],
+  COMPLETED:   ["DISPUTED"],
 };
 
 function canTransition(from: JobStatus, to: JobStatus): boolean {

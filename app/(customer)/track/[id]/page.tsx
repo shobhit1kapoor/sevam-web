@@ -15,18 +15,22 @@ import type { LatLng } from "@/types/job";
 
 export default function TrackJobPage() {
   const { id }    = useParams<{ id: string }>();
-  const [job,     setJob]     = useState<JobDetails | null>(null);
-  const [worker,  setWorker]  = useState<LatLng | undefined>(undefined);
-  const [loading, setLoading] = useState(true);
+  const [job,       setJob]       = useState<JobDetails | null>(null);
+  const [worker,    setWorker]    = useState<LatLng | undefined>(undefined);
+  const [loading,   setLoading]   = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Fetch job
   const load = useCallback(async () => {
+    setLoadError(null);
     const result = await getJobDetails(id);
     if (result.ok) {
       setJob(result.data);
       if (result.data.workerLat != null && result.data.workerLng != null) {
         setWorker({ lat: result.data.workerLat, lng: result.data.workerLng });
       }
+    } else {
+      setLoadError(result.error ?? "Failed to load job");
     }
     setLoading(false);
   }, [id]);
@@ -49,7 +53,17 @@ export default function TrackJobPage() {
     return () => { void supabase.removeChannel(channel); };
   }, [id]);
 
-  if (loading || !job) return <PageSpinner />;
+  if (loading) return <PageSpinner />;
+
+  if (loadError || !job) {
+    return (
+      <div className="py-20 text-center text-muted">
+        <p className="text-4xl mb-3">⚠️</p>
+        <p className="font-medium">Failed to load job</p>
+        <p className="text-sm mt-1">{loadError}</p>
+      </div>
+    );
+  }
 
   const isPending = job.status === "PENDING";
   const isActive  = ["ACCEPTED", "IN_PROGRESS"].includes(job.status);

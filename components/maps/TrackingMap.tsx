@@ -67,6 +67,7 @@ export function TrackingMap({
 
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const prevWorkerRef = useRef<LatLng | undefined>(workerLocation);
+  const hasFittedRef  = useRef(false);
 
   const onLoad = useCallback((m: google.maps.Map) => {
     setMap(m);
@@ -85,13 +86,14 @@ export function TrackingMap({
     map.panTo(workerLocation);
   }, [map, workerLocation]);
 
-  // Fit bounds to show both markers
+  // Fit bounds once when map + both markers are first available
   useEffect(() => {
-    if (!map || !workerLocation) return;
+    if (!map || !workerLocation || hasFittedRef.current) return;
     const bounds = new google.maps.LatLngBounds();
     bounds.extend(jobLocation);
     bounds.extend(workerLocation);
     map.fitBounds(bounds, /* padding */ 60);
+    hasFittedRef.current = true;
   }, [map, jobLocation, workerLocation]);
 
   if (loadError || !process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY) {

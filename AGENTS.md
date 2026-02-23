@@ -1,12 +1,14 @@
 # AGENTS.md — sevam-web
 
 ## Build & Run
+
 - `npm run dev` — start dev server (Next.js 16, App Router)
 - `npm run build` — production build
 - `npm run lint` — run ESLint (flat config, next/core-web-vitals + typescript)
 - No test runner configured yet.
 
 ## Architecture
+
 - **Next.js 16 App Router** with React 19 and TypeScript (strict mode).
 - Route groups: `app/(customer)/`, `app/(worker)/`, `app/(admin)/` for role-based pages.
 - `server/actions/` — server actions; `server/api/` — API routes.
@@ -16,6 +18,7 @@
 - **State**: Zustand (`skipHydration: true`). **Validation**: Zod. **Dates**: date-fns.
 
 ## Code Style
+
 - TypeScript strict. Use `import type` for type-only imports.
 - Tailwind CSS v4 for styling; combine classes with `cn()` (clsx + tailwind-merge).
 - React Server Components by default; add `"use client"` only when needed.

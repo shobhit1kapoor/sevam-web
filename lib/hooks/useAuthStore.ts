@@ -35,7 +35,9 @@ export const useAuthStore = create<AuthStore>()(
       // ── Initial state ──────────────────────────────────────────────
       user: null,
       pendingPhone: null,
-      isLoading: false,
+      // Start as true so layouts show <PageSpinner> until localStorage is
+      // rehydrated. Flipped to false by onRehydrateStorage below.
+      isLoading: true,
       error: null,
 
       // ── Actions ────────────────────────────────────────────────────
@@ -64,6 +66,10 @@ export const useAuthStore = create<AuthStore>()(
       }),
       // Prevents SSR hydration flashes: rehydrate explicitly from the client.
       skipHydration: true,
+      // When rehydration completes (via StoreHydrator), mark loading done.
+      onRehydrateStorage: () => () => {
+        useAuthStore.setState({ isLoading: false });
+      },
     }
   )
 );

@@ -24,7 +24,10 @@ interface FindNearbyWorkersInput {
 export async function findNearbyWorkers(
   input: FindNearbyWorkersInput
 ): Promise<NearbyWorker[]> {
-  const { lat, lng, jobType, radiusKm = 5, limit = 5 } = input;
+  const { lat, lng, jobType, radiusKm: rawRadius = 5, limit: rawLimit = 5 } = input;
+  // Clamp to prevent divide-by-zero in scoring and overly large queries.
+  const radiusKm = Math.max(0.1, Math.min(rawRadius, 200));
+  const limit    = Math.max(1,   Math.min(rawLimit,   50));
 
   const box = boundingBox(lat, lng, radiusKm);
 

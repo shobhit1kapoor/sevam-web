@@ -32,24 +32,23 @@ export async function updateWorkerLocation(
 
   if (!profile) return { ok: false, error: "Worker profile not found.", code: "SERVER_ERROR" };
 
-  // Throttle: allow at most 1 update per 10 seconds
+  // Throttle: allow at most 1 update per 10 seconds (atomic check-and-set via updateMany).
+  // Including the condition in WHERE makes it race-safe — concurrent requests cannot
+  // both satisfy lastLocUpdateMs <= now - THROTTLE_MS at the same instant.
   const now = BigInt(Date.now());
   const THROTTLE_MS = BigInt(10_000);
-  if (profile.lastLocUpdateMs && now - profile.lastLocUpdateMs < THROTTLE_MS) {
-    return { ok: true }; // silently ignore, not an error
-  }
 
-  await prisma.workerProfile.upsert({
-    where:  { id: profile.id },
-    update: { lat, lng, lastLocUpdate: new Date(), lastLocUpdateMs: now },
-    create: {
-      userId: session.userId,
-      lat,
-      lng,
-      lastLocUpdate:   new Date(),
-      lastLocUpdateMs: now,
+  const { count } = await prisma.workerProfile.updateMany({
+    where: {
+      id:              profile.id,
+      lastLocUpdateMs: { lte: now - THROTTLE_MS },
     },
+    data: { lat, lng, lastLocUpdate: new Date(), lastLocUpdateMs: now },
   });
+
+  if (count === 0) {
+    return { ok: true }; // throttled — not an error
+  }
 
   // Realtime broadcast if worker has an active job
   const activeJob = profile.jobs[0];

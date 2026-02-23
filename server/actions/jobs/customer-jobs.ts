@@ -21,7 +21,10 @@ export async function getCustomerJobs(
   if (!session) return { ok: false, error: "Not authenticated.", code: "SERVER_ERROR" };
 
   const { status, page = 1, limit = 20 } = input;
-  const skip = (page - 1) * limit;
+  // Clamp pagination inputs to prevent invalid skip or unbounded queries.
+  const safePage  = Number.isFinite(page)  ? Math.max(1, Math.floor(page))                  : 1;
+  const safeLimit = Number.isFinite(limit) ? Math.min(100, Math.max(1, Math.floor(limit))) : 20;
+  const skip = (safePage - 1) * safeLimit;
 
   const where = {
     customerId: session.userId,
@@ -38,7 +41,7 @@ export async function getCustomerJobs(
       },
       orderBy: { createdAt: "desc" },
       skip,
-      take: limit,
+      take: safeLimit,
     }),
     prisma.job.count({ where }),
   ]);
@@ -48,8 +51,8 @@ export async function getCustomerJobs(
     type:           j.type,
     status:         j.status,
     address:        j.address,
-    estimatedPrice: j.estimatedPrice,
-    finalPrice:     j.finalPrice,
+    estimatedPrice: Number(j.estimatedPrice),
+    finalPrice:     j.finalPrice !== null ? Number(j.finalPrice) : null,
     createdAt:      j.createdAt,
     worker: j.worker
       ? {
@@ -102,8 +105,8 @@ export async function getJobDetails(
     lat:            job.lat,
     lng:            job.lng,
     description:    job.description,
-    estimatedPrice: job.estimatedPrice,
-    finalPrice:     job.finalPrice,
+    estimatedPrice: Number(job.estimatedPrice),
+    finalPrice:     job.finalPrice !== null ? Number(job.finalPrice) : null,
     createdAt:      job.createdAt,
     acceptedAt:     job.acceptedAt,
     startedAt:      job.startedAt,
@@ -122,7 +125,7 @@ export async function getJobDetails(
       ? {
           id:              job.payment.id,
           status:          job.payment.status,
-          amount:          job.payment.amount,
+          amount:          Number(job.payment.amount),
           razorpayOrderId: job.payment.razorpayOrderId,
         }
       : null,

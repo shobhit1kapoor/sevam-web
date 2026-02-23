@@ -72,7 +72,9 @@ export async function verifyRefreshToken(
 ): Promise<{ userId: string } | null> {
   try {
     const { payload } = await jwtVerify(token, REFRESH_SECRET());
-    return { userId: payload.userId as string };
+    // Validate userId type before trusting it — mirrors verifyAccessToken.
+    if (typeof payload.userId !== "string" || !payload.userId) return null;
+    return { userId: payload.userId };
   } catch {
     return null;
   }

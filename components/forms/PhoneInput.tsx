@@ -39,7 +39,8 @@ export interface PhoneInputProps
 
 const PhoneInput = React.forwardRef<HTMLInputElement, PhoneInputProps>(
   ({ value = "", onChange, label, error, className, onBlur, id, ...props }, ref) => {
-    const inputId = id ?? "phone-input";
+    const generatedId = React.useId();
+    const inputId = id ?? generatedId;
     const [touched, setTouched] = React.useState(false);
 
     // Derive displayed value from the controlled raw value

@@ -36,6 +36,13 @@ const REFRESH_SECRET = () =>
 async function parseAccessToken(token: string): Promise<SessionPayload | null> {
   try {
     const { payload } = await jwtVerify(token, ACCESS_SECRET());
+    if (
+      typeof payload.userId !== "string" || !payload.userId ||
+      typeof payload.phone  !== "string" || !payload.phone  ||
+      !["CUSTOMER", "WORKER", "ADMIN"].includes(payload.userType as string)
+    ) {
+      return null;
+    }
     return payload as unknown as SessionPayload;
   } catch {
     return null;
@@ -47,7 +54,10 @@ async function parseRefreshToken(
 ): Promise<{ userId: string } | null> {
   try {
     const { payload } = await jwtVerify(token, REFRESH_SECRET());
-    return { userId: payload.userId as string };
+    if (typeof payload.userId !== "string" || !payload.userId) {
+      return null;
+    }
+    return { userId: payload.userId };
   } catch {
     return null;
   }
@@ -68,7 +78,7 @@ export async function proxy(req: NextRequest) {
   const refreshToken = req.cookies.get(REFRESH_COOKIE)?.value;
 
   let session: SessionPayload | null = null;
-  let refreshedSetCookie: string | null = null;
+  let refreshedSetCookies: string[] = [];
 
   // ── 1. Try access token ─────────────────────────────────────────────
   if (accessToken) {
@@ -99,7 +109,7 @@ export async function proxy(req: NextRequest) {
         if (newSession) {
           session = newSession;
           // Preserve the new cookies so we can carry them on the final response.
-          refreshedSetCookie = userRes.headers.get("set-cookie");
+          refreshedSetCookies = userRes.headers.getSetCookie();
         }
       }
     }
@@ -139,8 +149,8 @@ export async function proxy(req: NextRequest) {
   const finalResponse = NextResponse.next({ request: { headers: requestHeaders } });
 
   // Carry over refreshed session cookies so the browser receives them.
-  if (refreshedSetCookie) {
-    finalResponse.headers.set("set-cookie", refreshedSetCookie);
+  for (const cookie of refreshedSetCookies) {
+    finalResponse.headers.append("set-cookie", cookie);
   }
 
   return finalResponse;

@@ -9,7 +9,8 @@ import type { WorkerStats, WorkerEarnings, EarningsBreakdown } from "@/types/wor
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function startOfDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  // Use UTC to match toISOString()-based bucketing and avoid day-shift on non-UTC servers.
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 }
 
 function formatDate(d: Date): string {
@@ -55,8 +56,8 @@ export async function getWorkerJobs(): Promise<ActionResult<{
     type:           j.type,
     status:         j.status,
     address:        j.address,
-    estimatedPrice: j.estimatedPrice,
-    finalPrice:     j.finalPrice,
+    estimatedPrice: Number(j.estimatedPrice),
+    finalPrice:     j.finalPrice !== null ? Number(j.finalPrice) : null,
     createdAt:      j.createdAt,
     worker:         null,
   });
@@ -95,7 +96,7 @@ export async function getWorkerEarnings(): Promise<ActionResult<WorkerEarnings>>
 
   for (const job of completedJobs) {
     const dayKey = formatDate(startOfDay(job.completedAt!));
-    const amount = job.finalPrice ?? job.estimatedPrice;
+    const amount = Number(job.finalPrice ?? job.estimatedPrice);
     totalLast30 += amount;
 
     if (!byDay.has(dayKey)) {
@@ -109,10 +110,10 @@ export async function getWorkerEarnings(): Promise<ActionResult<WorkerEarnings>>
   // Last 7 days
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const weekJobs = completedJobs.filter((j) => j.completedAt! >= sevenDaysAgo);
-  const weeklyTotal = weekJobs.reduce((sum, j) => sum + (j.finalPrice ?? j.estimatedPrice), 0);
+  const weeklyTotal = weekJobs.reduce((sum, j) => sum + Number(j.finalPrice ?? j.estimatedPrice), 0);
 
   const stats: WorkerStats = {
-    totalEarnings: profile.totalEarnings,
+    totalEarnings:  Number(profile.totalEarnings),
     totalJobs:     profile.totalJobs,
     rating:        profile.rating,
     weeklyEarnings: weeklyTotal,

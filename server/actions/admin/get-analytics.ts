@@ -37,8 +37,9 @@ export async function getAnalytics(): Promise<ActionResult<AnalyticsSummary>> {
     prisma.job.count(),
   ]);
 
-  // Also fetch creation dates for the all-jobs daily series
+  // Also fetch creation dates for the all-jobs daily series (DB-side filter avoids full scan)
   const allJobDates = await prisma.job.findMany({
+    where:  { createdAt: { gte: thirtyDaysAgo } },
     select: { createdAt: true },
   });
 
@@ -65,7 +66,7 @@ export async function getAnalytics(): Promise<ActionResult<AnalyticsSummary>> {
   const totalJobs = totalJobsCount;
 
   const totalRevenue = completedJobsLast30.reduce(
-    (sum, j) => sum + (j.finalPrice ?? j.estimatedPrice), 0
+    (sum, j) => sum + Number(j.finalPrice ?? j.estimatedPrice), 0
   );
 
   const totalWorkers    = workerProfiles.length;
@@ -80,19 +81,17 @@ export async function getAnalytics(): Promise<ActionResult<AnalyticsSummary>> {
     if (!dayMap.has(key)) dayMap.set(key, { jobs: 0, revenue: 0 });
     const entry = dayMap.get(key)!;
     entry.jobs    += 1;
-    entry.revenue += job.finalPrice ?? job.estimatedPrice;
+    entry.revenue += Number(job.finalPrice ?? job.estimatedPrice);
   }
   const dailySeries = Array.from(dayMap.entries())
     .map(([date, v]) => ({ date, ...v }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  // All jobs created per day (last 30 days)
+  // All jobs created per day (last 30 days) — already filtered by the DB query
   const allDayMap = new Map<string, number>();
   for (const job of allJobDates) {
     const key = job.createdAt.toISOString().slice(0, 10);
-    if (key >= thirtyDaysAgo.toISOString().slice(0, 10)) {
-      allDayMap.set(key, (allDayMap.get(key) ?? 0) + 1);
-    }
+    allDayMap.set(key, (allDayMap.get(key) ?? 0) + 1);
   }
   const allJobsDailySeries = Array.from(allDayMap.entries())
     .map(([date, count]) => ({ date, count }))
