@@ -1,15 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
 import { mintAccessToken, mintRefreshToken, verifyRefreshToken } from "@/lib/auth/session";
+import { checkRateLimit, sessionRefreshLimiter } from "@/lib/utils/rate-limit";
+import { captureCritical } from "@/lib/utils/monitoring";
 import type { SessionPayload, UserType } from "@/types/auth";
 
 /**
  * POST /api/auth/session-refresh
  *
  * Called internally by the middleware (edge) to refresh a session.
- * Accepts { userId } in the request body (already verified by middleware).
- * Uses the Node.js runtime so Prisma is available.
+ * - P0-B1: Rate limited to 30 refresh attempts per IP per hour.
+ * - P0-B3: Critical errors are captured by Sentry.
  */
 export async function POST(req: NextRequest) {
+  // ── P0-B1: Rate limit per IP ───────────────────────────────────────────
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    req.headers.get("x-real-ip") ??
+    "unknown";
+
+  const rl = await checkRateLimit(sessionRefreshLimiter, ip);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests" },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rl.retryAfter ?? 60) },
+      }
+    );
+  }
+
   try {
     const refreshToken = req.cookies.get("sevam_refresh")?.value;
     if (!refreshToken) {
@@ -21,7 +40,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(null, { status: 401 });
     }
 
-    // Dynamically import Prisma so this route stays Node-only
     const { prisma } = await import("@/lib/db/prisma");
     const user = await prisma.user.findUnique({
       where: { id: refreshPayload.userId },
@@ -59,12 +77,13 @@ export async function POST(req: NextRequest) {
       secure: isProduction,
       sameSite: "lax",
       path: "/",
-      maxAge: 30 * 24 * 60 * 60,
+      maxAge: 7 * 24 * 60 * 60,
     });
 
     return res;
   } catch (err) {
-    console.error("[session-refresh] Error:", err);
-    return NextResponse.json(null, { status: 500 });
+    // ── P0-B3: Auth failures are critical ────────────────────────────────
+    captureCritical(err, { action: "session-refresh" });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
