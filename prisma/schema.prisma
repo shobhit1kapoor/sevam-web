@@ -1,0 +1,210 @@
+// This is your Prisma schema file.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum UserType {
+  CUSTOMER
+  WORKER
+  ADMIN
+}
+
+enum JobType {
+  PLUMBING
+  ELECTRICAL
+  PAINTING
+  CARPENTRY
+  CLEANING
+  AC_REPAIR
+  APPLIANCE_REPAIR
+  OTHER
+}
+
+enum JobStatus {
+  PENDING
+  ACCEPTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+enum DisputeStatus {
+  OPEN
+  REVIEWING
+  RESOLVED
+  CLOSED
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model User {
+  id            String         @id @default(cuid())
+  phone         String         @unique
+  name          String?
+  userType      UserType       @default(CUSTOMER)
+  fcmToken      String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  workerProfile WorkerProfile?
+  customerJobs  Job[]          @relation("CustomerJobs")
+  notifications Notification[]
+  disputes      JobDispute[]   @relation("CustomerDisputes")
+
+  @@index([userType])
+  @@map("users")
+}
+
+model WorkerProfile {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  skills          String[]
+  isOnline        Boolean   @default(false)
+  isApproved      Boolean   @default(false)
+  rating          Float     @default(0)
+  totalJobs       Int       @default(0)
+  totalEarnings   Decimal   @default(0)
+
+  lat             Float?
+  lng             Float?
+  /// Millisecond epoch used for atomic throttle checks and ordering concurrent location updates.
+  lastLocUpdateMs BigInt    @default(0)
+
+  idDocUrl        String?
+  photoUrl        String?
+  bio             String?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  jobs            Job[]        @relation("WorkerJobs")
+  disputes        JobDispute[] @relation("WorkerDisputes")
+
+  @@map("worker_profiles")
+}
+
+model Job {
+  id             String         @id @default(cuid())
+  customerId     String
+  customer       User           @relation("CustomerJobs", fields: [customerId], references: [id])
+  workerId       String?
+  worker         WorkerProfile? @relation("WorkerJobs", fields: [workerId], references: [id])
+
+  type           JobType
+  status         JobStatus      @default(PENDING)
+  description    String
+
+  address        String
+  lat            Float
+  lng            Float
+
+  estimatedPrice Decimal
+  finalPrice     Decimal?
+
+  acceptedAt     DateTime?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  cancelledAt    DateTime?
+
+  beforePhotoUrl String?
+  afterPhotoUrl  String?
+
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  payment        Payment?
+  dispute        JobDispute?
+  notifications  Notification[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([workerId])
+  @@map("jobs")
+}
+
+model Payment {
+  id                  String        @id @default(cuid())
+  jobId               String        @unique
+  job                 Job           @relation(fields: [jobId], references: [id])
+
+  amount              Decimal
+  razorpayOrderId     String?
+  razorpayPaymentId   String?
+  razorpaySignature   String?
+
+  status              PaymentStatus @default(PENDING)
+
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  @@map("payments")
+}
+
+model JobDispute {
+  id          String         @id @default(cuid())
+  jobId       String         @unique
+  job         Job            @relation(fields: [jobId], references: [id])
+
+  raisedById  String
+  raisedBy    User           @relation("CustomerDisputes", fields: [raisedById], references: [id])
+  workerId    String?
+  worker      WorkerProfile? @relation("WorkerDisputes", fields: [workerId], references: [id])
+
+  reason      String
+  status      DisputeStatus  @default(OPEN)
+  resolution  String?
+  resolvedAt  DateTime?
+
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@map("job_disputes")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobId     String?
+  job       Job?     @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  title     String
+  body      String
+  isRead    Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@map("notifications")
+}
+
+model OtpVerification {
+  id          String   @id @default(cuid())
+  phone       String   @unique
+  hashedOtp   String
+  expiresAt   DateTime
+  attempts    Int      @default(0)
+  sendCount   Int      @default(1)
+  windowStart DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("otp_verifications")
+}
