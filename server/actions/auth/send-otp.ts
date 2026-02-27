@@ -21,7 +21,8 @@ import type { ActionResult } from "@/types/auth";
  * 2. Redis rate limit: max 5 sends per phone per hour (P0-B1)
  * 3. DB rate limit:   max OTP_MAX_SENDS per OTP_WINDOW_MS window
  * 4. Generate 6-digit OTP, HMAC-hash it, upsert OtpVerification
- * 5. Send SMS via Twilio (fail gracefully — return error, don't throw)
+ * 5. Send SMS via Twilio — on failure, roll back the OTP record so the
+ *    send-count is not consumed and the user can retry immediately.
  */
 export async function sendOtp(rawPhone: string): Promise<ActionResult> {
   // ── 1. Validate phone ──────────────────────────────────────────────
@@ -56,7 +57,7 @@ export async function sendOtp(rawPhone: string): Promise<ActionResult> {
 
     if (existing) {
       const windowAge = now.getTime() - existing.windowStart.getTime();
-      const inWindow = windowAge < OTP_WINDOW_MS;
+      const inWindow  = windowAge < OTP_WINDOW_MS;
 
       if (inWindow && existing.sendCount >= OTP_MAX_SENDS) {
         const retryAfterSec = Math.ceil((OTP_WINDOW_MS - windowAge) / 1000);
@@ -69,9 +70,13 @@ export async function sendOtp(rawPhone: string): Promise<ActionResult> {
     }
 
     // ── 4. Generate & store OTP ────────────────────────────────────
-    const otp = generateOtp();
+    const otp       = generateOtp();
     const hashedOtp = hashOtp(otp);
     const expiresAt = new Date(now.getTime() + OTP_TTL_MS);
+
+    const inWindow =
+      existing != null &&
+      existing.windowStart.getTime() + OTP_WINDOW_MS > now.getTime();
 
     await prisma.otpVerification.upsert({
       where: { phone },
@@ -79,33 +84,32 @@ export async function sendOtp(rawPhone: string): Promise<ActionResult> {
         phone,
         hashedOtp,
         expiresAt,
-        attempts: 0,
-        sendCount: 1,
+        attempts:    0,
+        sendCount:   1,
         windowStart: now,
       },
       update: {
         hashedOtp,
         expiresAt,
-        attempts: 0,
-        sendCount: existing
-          ? existing.windowStart.getTime() + OTP_WINDOW_MS > now.getTime()
-            ? { increment: 1 }
-            : 1
-          : 1,
-        windowStart:
-          existing && existing.windowStart.getTime() + OTP_WINDOW_MS > now.getTime()
-            ? existing.windowStart
-            : now,
+        attempts:    0,
+        sendCount:   inWindow ? { increment: 1 } : 1,
+        windowStart: inWindow ? existing!.windowStart : now,
       },
     });
 
     // ── 5. Send SMS ────────────────────────────────────────────────
     const smsResult = await sendSms(
       phone,
-      `Your Sevam OTP is ${otp}. Valid for 10 minutes. Do not share this with anyone.`
+      `Your Sevam verification code is ${otp}. Valid for 10 minutes. Do not share this code.`
     );
 
     if (!smsResult.ok) {
+      // Roll back the upserted record so the send-count is not consumed
+      // and the user can retry immediately without hitting the DB rate limit.
+      await prisma.otpVerification
+        .delete({ where: { phone } })
+        .catch(() => { /* ignore if already gone */ });
+
       return {
         ok: false,
         error: "Failed to send OTP. Please try again.",

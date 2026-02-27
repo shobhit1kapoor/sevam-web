@@ -13,7 +13,10 @@ import * as Sentry from "@sentry/nextjs";
 export interface ErrorContext {
   /** Authenticated user id, if known */
   userId?: string;
-  /** Masked phone number for identification */
+  /**
+   * Phone number — will be masked (e.g. +91XXXXXX23) before being sent to
+   * Sentry to comply with data-minimisation requirements.
+   */
   phone?: string;
   /** Name of the server action or API route */
   action: string;
@@ -23,6 +26,29 @@ export interface ErrorContext {
   paymentId?: string;
   /** Any extra structured context */
   extra?: Record<string, unknown>;
+}
+
+/**
+ * Mask a phone number for Sentry — keeps country code prefix and last 2 digits.
+ * e.g. +919876543210 → +91XXXXXX10
+ */
+function maskPhone(phone: string): string {
+  return phone.replace(/(+d{2})d{6}(d{2})$/, "$1XXXXXX$2");
+}
+
+/** Apply common scope tags/user from ErrorContext. */
+function applyScope(scope: Sentry.Scope, ctx: ErrorContext): void {
+  if (ctx.userId) {
+    scope.setUser({
+      id: ctx.userId,
+      // Masked so Sentry never stores raw PII
+      username: ctx.phone ? maskPhone(ctx.phone) : undefined,
+    });
+  }
+  scope.setTag("action", ctx.action);
+  if (ctx.jobId)     scope.setTag("jobId",     ctx.jobId);
+  if (ctx.paymentId) scope.setTag("paymentId", ctx.paymentId);
+  if (ctx.extra)     scope.setExtras(ctx.extra);
 }
 
 /**
@@ -36,11 +62,7 @@ export interface ErrorContext {
  */
 export function captureError(error: unknown, ctx: ErrorContext): void {
   Sentry.withScope((scope) => {
-    if (ctx.userId) scope.setUser({ id: ctx.userId, username: ctx.phone });
-    scope.setTag("action", ctx.action);
-    if (ctx.jobId) scope.setTag("jobId", ctx.jobId);
-    if (ctx.paymentId) scope.setTag("paymentId", ctx.paymentId);
-    if (ctx.extra) scope.setExtras(ctx.extra);
+    applyScope(scope, ctx);
     Sentry.captureException(error);
   });
 }
@@ -58,12 +80,8 @@ export function captureError(error: unknown, ctx: ErrorContext): void {
 export function captureCritical(error: unknown, ctx: ErrorContext): void {
   Sentry.withScope((scope) => {
     scope.setLevel("fatal");
-    if (ctx.userId) scope.setUser({ id: ctx.userId, username: ctx.phone });
-    scope.setTag("action", ctx.action);
     scope.setTag("critical", "true");
-    if (ctx.jobId) scope.setTag("jobId", ctx.jobId);
-    if (ctx.paymentId) scope.setTag("paymentId", ctx.paymentId);
-    if (ctx.extra) scope.setExtras(ctx.extra);
+    applyScope(scope, ctx);
     Sentry.captureException(error);
   });
 }

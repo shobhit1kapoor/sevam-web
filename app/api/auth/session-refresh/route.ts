@@ -9,24 +9,30 @@ import type { SessionPayload, UserType } from "@/types/auth";
  *
  * Called internally by the middleware (edge) to refresh a session.
  * - P0-B1: Rate limited to 30 refresh attempts per IP per hour.
+ *          If IP cannot be determined, rate limiting is skipped to avoid
+ *          collapsing all clients into a shared "unknown" bucket.
  * - P0-B3: Critical errors are captured by Sentry.
  */
 export async function POST(req: NextRequest) {
   // ── P0-B1: Rate limit per IP ───────────────────────────────────────────
   const ip =
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    req.headers.get("x-real-ip") ??
-    "unknown";
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("x-real-ip") ||
+    null;
 
-  const rl = await checkRateLimit(sessionRefreshLimiter, ip);
-  if (!rl.allowed) {
-    return NextResponse.json(
-      { error: "Too many requests" },
-      {
-        status: 429,
-        headers: { "Retry-After": String(rl.retryAfter ?? 60) },
-      }
-    );
+  // Skip rate-limiting when IP is indeterminate — using "unknown" would collapse
+  // all unidentifiable clients into one shared 30/hr bucket.
+  if (ip) {
+    const rl = await checkRateLimit(sessionRefreshLimiter, ip);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        {
+          status:  429,
+          headers: { "Retry-After": String(rl.retryAfter ?? 60) },
+        }
+      );
+    }
   }
 
   try {
@@ -42,7 +48,7 @@ export async function POST(req: NextRequest) {
 
     const { prisma } = await import("@/lib/db/prisma");
     const user = await prisma.user.findUnique({
-      where: { id: refreshPayload.userId },
+      where:  { id: refreshPayload.userId },
       select: { id: true, phone: true, userType: true },
     });
 
@@ -51,8 +57,8 @@ export async function POST(req: NextRequest) {
     }
 
     const payload: SessionPayload = {
-      userId: user.id,
-      phone: user.phone,
+      userId:   user.id,
+      phone:    user.phone,
       userType: user.userType as UserType,
     };
 
@@ -61,23 +67,23 @@ export async function POST(req: NextRequest) {
       mintRefreshToken({ userId: user.id }),
     ]);
 
-    const res = NextResponse.json(payload);
+    const res          = NextResponse.json(payload);
     const isProduction = process.env.NODE_ENV === "production";
 
     res.cookies.set("sevam_session", accessToken, {
       httpOnly: true,
-      secure: isProduction,
+      secure:   isProduction,
       sameSite: "lax",
-      path: "/",
-      maxAge: 15 * 60,
+      path:     "/",
+      maxAge:   15 * 60,
     });
 
     res.cookies.set("sevam_refresh", newRefresh, {
       httpOnly: true,
-      secure: isProduction,
+      secure:   isProduction,
       sameSite: "lax",
-      path: "/",
-      maxAge: 7 * 24 * 60 * 60,
+      path:     "/",
+      maxAge:   30 * 24 * 60 * 60, // 30 days — consistent with JWT TTL and login flow
     });
 
     return res;

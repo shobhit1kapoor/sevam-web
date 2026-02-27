@@ -2,13 +2,13 @@
  * P0-B4 — Restore Smoke Test
  *
  * Run after any database restore to validate data integrity.
+ * Uses the shared Prisma client from lib/db/prisma.
+ *
  * Usage:
  *   npx tsx scripts/validate-restore.ts
  */
 
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { prisma } from "@/lib/db/prisma";
 
 async function main() {
   console.log("Running restore validation checks...\n");
@@ -28,21 +28,28 @@ async function main() {
 
   const errors: string[] = [];
 
-  if (userCount === 0)    errors.push("❌ No users found — restore may be incomplete");
-  if (jobCount === 0)     errors.push("⚠️  No jobs found — may be expected for a fresh restore");
+  if (userCount === 0)
+    errors.push("❌ No users found — restore may be incomplete");
+  if (jobCount === 0)
+    errors.push("⚠️  No jobs found — may be expected for a fresh restore");
 
-  // Referential integrity spot-check
-  const orphanedJobs = await prisma.job.count({
-    where: { customer: { is: null } },
-  });
-  if (orphanedJobs > 0) {
+  // Referential integrity spot-check: jobs whose customer no longer exists.
+  // Prisma does not allow `{ customer: { is: null } }` on required relations;
+  // use a raw aggregate instead.
+  const [{ count: orphanedJobs }] = await prisma.$queryRaw<[{ count: bigint }]>`
+    SELECT COUNT(*) AS count
+    FROM "Job" j
+    WHERE NOT EXISTS (SELECT 1 FROM "User" u WHERE u.id = j."customerId")
+  `;
+  if (orphanedJobs > 0n) {
     errors.push(`❌ ${orphanedJobs} jobs with missing customer FK — database integrity issue`);
   }
 
   if (errors.length > 0) {
     console.error("\nValidation failures:");
     errors.forEach((e) => console.error(`  ${e}`));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   console.log("\n✅ All checks passed. Restore looks healthy.");
@@ -51,6 +58,6 @@ async function main() {
 main()
   .catch((err) => {
     console.error("Unexpected error:", err);
-    process.exit(1);
+    process.exitCode = 1;
   })
   .finally(() => prisma.$disconnect());

@@ -41,7 +41,7 @@ export function sanitizeText(raw: string): string {
  * Strips all HTML/JS — we store and display plain text only.
  */
 export function sanitizeDescription(raw: string): string {
-  return xss(raw.trim(), PLAIN_TEXT_OPTIONS);
+  return sanitizeText(raw);
 }
 
 /**
@@ -67,6 +67,7 @@ export function sanitizeBio(raw: string): string {
 
 /**
  * Batch-sanitize an object's string fields in one pass.
+ * Uses Object.keys of the input to preserve the exact shape.
  *
  * @example
  * const clean = sanitizeFields({ description, address }, sanitizeDescription);
@@ -75,7 +76,8 @@ export function sanitizeFields<T extends Record<string, string>>(
   fields: T,
   sanitizer: (v: string) => string = sanitizeText
 ): T {
-  return Object.fromEntries(
-    Object.entries(fields).map(([k, v]) => [k, sanitizer(v)])
-  ) as T;
+  return (Object.keys(fields) as Array<keyof T>).reduce<T>((acc, key) => {
+    acc[key] = sanitizer(fields[key] as string) as T[keyof T];
+    return acc;
+  }, {} as T);
 }
