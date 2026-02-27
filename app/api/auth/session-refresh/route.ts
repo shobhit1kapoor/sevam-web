@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { mintAccessToken, mintRefreshToken, verifyRefreshToken } from "@/lib/auth/session";
 import { checkRateLimit, sessionRefreshLimiter } from "@/lib/utils/rate-limit";
 import { captureCritical } from "@/lib/utils/monitoring";
@@ -26,10 +27,25 @@ export async function POST(req: NextRequest) {
     null;
 
   // Rate-limit BEFORE inspecting the token so that missing/invalid-token
-  // requests are also throttled. Use IP when available; fall back to "anon"
-  // (a shared bucket for unresolvable clients — acceptable because real
-  // authenticated traffic will always carry an IP via the proxy).
-  const rlKey = ip ?? "anon";
+  // requests are also throttled. Use IP when available; fall back to a SHA-256
+  // hash of the raw refresh-token cookie — giving each requester their own
+  // bucket without storing PII and without creating a shared "anon" superbucket.
+  const rawTokenForKey = req.cookies.get("sevam_refresh")?.value;
+  let rlKey: string;
+  if (ip) {
+    rlKey = ip;
+  } else if (rawTokenForKey) {
+    const hashBuf = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(rawTokenForKey)
+    );
+    rlKey = "tok:" + Array.from(new Uint8Array(hashBuf))
+      .slice(0, 8)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  } else {
+    rlKey = "anon";
+  }
   const rl = await checkRateLimit(sessionRefreshLimiter, rlKey);
   if (!rl.allowed) {
     return NextResponse.json(
@@ -41,7 +57,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const rawRefreshToken = req.cookies.get("sevam_refresh")?.value;
+  // rawTokenForKey was read above for the RL key — reuse it here
+  const rawRefreshToken = rawTokenForKey;
   if (!rawRefreshToken) {
     return NextResponse.json(null, { status: 401 });
   }
