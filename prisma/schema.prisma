@@ -51,6 +51,13 @@ enum DisputeStatus {
   CLOSED
 }
 
+enum CancelledBy {
+  CUSTOMER
+  WORKER
+  ADMIN
+  SYSTEM
+}
+
 // ─── Models ───────────────────────────────────────────────────────────────────
 
 model User {
@@ -66,6 +73,7 @@ model User {
   customerJobs  Job[]          @relation("CustomerJobs")
   notifications Notification[]
   disputes      JobDispute[]   @relation("CustomerDisputes")
+  reviews       JobReview[]    @relation("CustomerReviews")
 
   @@index([userType])
   @@map("users")
@@ -97,6 +105,7 @@ model WorkerProfile {
 
   jobs            Job[]        @relation("WorkerJobs")
   disputes        JobDispute[] @relation("WorkerDisputes")
+  reviews         JobReview[]  @relation("WorkerReviews")
 
   @@map("worker_profiles")
 }
@@ -124,8 +133,15 @@ model Job {
   completedAt    DateTime?
   cancelledAt    DateTime?
 
-  beforePhotoUrl String?
-  afterPhotoUrl  String?
+  beforePhotoUrl     String?
+  afterPhotoUrl      String?
+
+  /// Optional reason provided when a job is cancelled.
+  cancellationReason String?
+  /// Who initiated the cancellation.
+  cancelledBy        CancelledBy?
+  /// True when a late-cancellation penalty fee was charged.
+  penaltyApplied     Boolean          @default(false)
 
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
@@ -133,10 +149,17 @@ model Job {
   payment        Payment?
   dispute        JobDispute?
   notifications  Notification[]
+  review         JobReview?
 
   @@index([status])
   @@index([customerId])
   @@index([workerId])
+  /// Speed up worker earnings / dashboard queries
+  @@index([workerId, status])
+  /// Speed up customer job history page queries
+  @@index([customerId, status])
+  /// Speed up admin job list ordered by creation date
+  @@index([createdAt(sort: Desc)])
   @@map("jobs")
 }
 
@@ -149,6 +172,10 @@ model Payment {
   razorpayOrderId     String?
   razorpayPaymentId   String?
   razorpaySignature   String?
+  /// Client-generated key to prevent duplicate order creation on retries.
+  idempotencyKey      String?       @unique
+  /// Razorpay refund ID when a refund has been issued.
+  razorpayRefundId    String?
 
   status              PaymentStatus @default(PENDING)
 
@@ -193,6 +220,30 @@ model Notification {
   createdAt DateTime @default(now())
 
   @@map("notifications")
+}
+
+model JobReview {
+  id            String        @id @default(cuid())
+  jobId         String        @unique
+  job           Job           @relation(fields: [jobId], references: [id])
+
+  /// The customer who authored this review.
+  customerId    String
+  customer      User          @relation("CustomerReviews", fields: [customerId], references: [id])
+
+  /// The worker being reviewed.
+  workerId      String
+  worker        WorkerProfile @relation("WorkerReviews", fields: [workerId], references: [id])
+
+  /// Integer 1–5 star rating.
+  rating        Int
+  comment       String?
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([workerId])
+  @@map("job_reviews")
 }
 
 model OtpVerification {

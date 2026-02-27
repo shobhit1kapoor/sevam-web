@@ -4,7 +4,9 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { createClient } from "@/lib/db/supabase";
 import { getJobDetails } from "@/server/actions/jobs/customer-jobs";
-import { TrackingMap } from "@/components/maps/TrackingMap";
+import { LazyTrackingMap as TrackingMap, MapSkeleton } from "@/components/maps";
+import { MapErrorBoundary } from "@/components/MapErrorBoundary";
+import { Suspense } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui";
 import { PageSpinner } from "@/components/ui";
@@ -83,11 +85,15 @@ export default function TrackJobPage() {
       </div>
 
       {/* Map */}
-      <TrackingMap
-        jobLocation={{ lat: job.lat, lng: job.lng }}
-        workerLocation={worker}
-        height="320px"
-      />
+      <MapErrorBoundary>
+        <Suspense fallback={<MapSkeleton height={320} />}>
+          <TrackingMap
+            jobLocation={{ lat: job.lat, lng: job.lng }}
+            workerLocation={worker}
+            height="320px"
+          />
+        </Suspense>
+      </MapErrorBoundary>
 
       {/* Job info */}
       <Card>

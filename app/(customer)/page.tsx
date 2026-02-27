@@ -6,7 +6,9 @@ import { Button, Card, CardContent, CardHeader, CardTitle } from "@/components/u
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { JobMap } from "@/components/maps/JobMap";
+import { LazyJobMap as JobMap, MapSkeleton } from "@/components/maps";
+import { MapErrorBoundary } from "@/components/MapErrorBoundary";
+import { Suspense } from "react";
 import { createJob } from "@/server/actions/jobs/create-job";
 import { formatPrice } from "@/lib/utils/pricing";
 import { estimatePrice } from "@/lib/utils/pricing";
@@ -103,11 +105,15 @@ export default function CustomerHomePage() {
           <p className="mb-2 text-sm font-medium text-foreground">
             Pin your location <span className="text-muted">(tap the map)</span>
           </p>
-          <JobMap
-            value={location ?? undefined}
-            onChange={handleLocationPick}
-            height="260px"
-          />
+          <MapErrorBoundary>
+            <Suspense fallback={<MapSkeleton height={260} />}>
+              <JobMap
+                value={location ?? undefined}
+                onChange={handleLocationPick}
+                height="260px"
+              />
+            </Suspense>
+          </MapErrorBoundary>
         </div>
 
         {/* Price estimate */}

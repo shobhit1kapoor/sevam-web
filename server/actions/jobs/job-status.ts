@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/db/prisma";
 import { getSession } from "@/lib/auth/session";
 import { sendPushNotification } from "@/lib/utils/notifications";
+import { captureError } from "@/lib/utils/monitoring";
 import type { ActionResult } from "@/types/auth";
 import type { JobStatus } from "@/lib/generated/prisma/client";
 
@@ -171,29 +172,132 @@ export async function completeJob(
 
 // ─── Cancel job ───────────────────────────────────────────────────────────────
 
-export async function cancelJob(jobId: string): Promise<ActionResult> {
+/**
+ * Cancel a job with an optional reason string.
+ *
+ * Rules:
+ * - Customers can cancel PENDING or ACCEPTED jobs.
+ *   Cancelling an ACCEPTED job (worker already assigned) incurs a ₹50 penalty.
+ * - Workers can cancel an ACCEPTED job (they decline after accepting).
+ *   The job returns to PENDING so another worker can pick it up.
+ * - Admins can cancel any cancellable job.
+ */
+export async function cancelJob(
+  jobId: string,
+  reason?: string,
+): Promise<ActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, error: "Not authenticated.", code: "SERVER_ERROR" };
 
-  const job = await prisma.job.findUnique({ where: { id: jobId } });
+  const job = await prisma.job.findUnique({
+    where: { id: jobId },
+    include: {
+      worker: { select: { userId: true, user: { select: { fcmToken: true } } } },
+      customer: { select: { fcmToken: true } },
+    },
+  });
   if (!job) return { ok: false, error: "Job not found.", code: "SERVER_ERROR" };
 
-  // Customers can only cancel their own jobs; admins can cancel any job.
-  if (session.userType === "CUSTOMER" && job.customerId !== session.userId) {
+  const { userType, userId } = session;
+
+  // ── Authorization ──────────────────────────────────────────────────────────
+  if (userType === "CUSTOMER" && job.customerId !== userId) {
     return { ok: false, error: "Not authorised.", code: "SERVER_ERROR" };
   }
-  if (session.userType === "WORKER") {
-    return { ok: false, error: "Workers cannot cancel jobs.", code: "SERVER_ERROR" };
+  if (userType === "WORKER") {
+    // Workers can only cancel jobs assigned to them in ACCEPTED state.
+    const workerProfile = await prisma.workerProfile.findUnique({ where: { userId } });
+    if (!workerProfile || job.workerId !== workerProfile.id) {
+      return { ok: false, error: "This job is not assigned to you.", code: "SERVER_ERROR" };
+    }
+    if (job.status !== "ACCEPTED") {
+      return { ok: false, error: "You can only cancel a job before it starts.", code: "SERVER_ERROR" };
+    }
   }
 
   if (!canTransition(job.status, "CANCELLED")) {
     return { ok: false, error: `Cannot cancel job (status: ${job.status}).`, code: "SERVER_ERROR" };
   }
 
-  await prisma.job.update({
-    where: { id: jobId },
-    data: { status: "CANCELLED", cancelledAt: new Date() },
-  });
+  // ── Determine cancelledBy value (maps to enum CancelledBy) ───────────────
+  const cancelledBy =
+    userType === "WORKER" ? "WORKER" :
+    userType === "ADMIN"  ? "ADMIN"  :
+    "CUSTOMER";
 
-  return { ok: true };
+  // ── Penalty: customer cancels after worker is already assigned ────────────
+  // A ₹50 late-cancellation fee is flagged so the billing layer can charge it.
+  const penaltyApplied =
+    userType === "CUSTOMER" &&
+    job.status === "ACCEPTED" &&
+    job.workerId !== null;
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      if (userType === "WORKER") {
+        // Worker declines → job returns to PENDING, worker assignment cleared.
+        await tx.job.update({
+          where: { id: jobId },
+          data: {
+            status:             "PENDING",
+            workerId:           null,
+            acceptedAt:         null,
+            cancellationReason: reason ?? null,
+            cancelledBy,
+          },
+        });
+
+        // Notify customer that the worker cancelled so they know to wait for re-assignment.
+        if (job.customer?.fcmToken) {
+          await sendPushNotification(job.customer.fcmToken, {
+            title: "Worker cancelled",
+            body:  "Your assigned worker cancelled. We're finding you a new one.",
+            data:  { jobId },
+          }).catch(() => null);
+        }
+        await tx.notification.create({
+          data: {
+            userId: job.customerId,
+            jobId,
+            title:  "Worker cancelled",
+            body:   "Your assigned worker cancelled. We're finding you a new one.",
+          },
+        });
+      } else {
+        // Customer or admin cancels → terminal CANCELLED state.
+        await tx.job.update({
+          where: { id: jobId },
+          data: {
+            status:             "CANCELLED",
+            cancelledAt:        new Date(),
+            cancellationReason: reason ?? null,
+            cancelledBy,
+            penaltyApplied,
+          },
+        });
+
+        // Notify the assigned worker (if any) that the job was cancelled.
+        if (job.worker?.user?.fcmToken) {
+          await sendPushNotification(job.worker.user.fcmToken, {
+            title: "Job cancelled",
+            body:  "The customer has cancelled this job.",
+            data:  { jobId },
+          }).catch(() => null);
+          await tx.notification.create({
+            data: {
+              userId: job.worker.userId,
+              jobId,
+              title:  "Job cancelled",
+              body:   "The customer has cancelled this job.",
+            },
+          });
+        }
+      }
+    });
+  } catch (err) {
+    captureError(err, { action: "cancelJob", jobId });
+    return { ok: false, error: "Failed to cancel job. Please try again.", code: "SERVER_ERROR" };
+  }
+
+  return { ok: true, ...(penaltyApplied ? { data: { penaltyApplied: true } } : {}) };
 }
