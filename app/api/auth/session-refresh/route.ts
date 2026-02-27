@@ -1,30 +1,77 @@
-import { NextRequest, NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { mintAccessToken, mintRefreshToken, verifyRefreshToken } from "@/lib/auth/session";
+import { checkRateLimit, sessionRefreshLimiter } from "@/lib/utils/rate-limit";
+import { captureCritical } from "@/lib/utils/monitoring";
 import type { SessionPayload, UserType } from "@/types/auth";
 
 /**
  * POST /api/auth/session-refresh
  *
  * Called internally by the middleware (edge) to refresh a session.
- * Accepts { userId } in the request body (already verified by middleware).
- * Uses the Node.js runtime so Prisma is available.
+ * - P0-B1: Rate limited to 30 refresh attempts per IP per hour.
+ *          Falls back to a per-userId bucket when IP is not available,
+ *          preventing a shared global bucket across all clients.
+ * - P0-B3: Critical errors are captured by Sentry.
  */
 export async function POST(req: NextRequest) {
+  // ── P0-B1: Rate limit per IP (fallback: per userId from refresh token) ────
+  //
+  // Prefer IP so each device is bucketed independently.
+  // When IP is indeterminate (direct internal calls without a proxy), fall back
+  // to the userId extracted from the refresh token — prevents a shared global
+  // "unknown" bucket while still protecting per-user refresh rate.
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("x-real-ip") ||
+    null;
+
+  // Rate-limit BEFORE inspecting the token so that missing/invalid-token
+  // requests are also throttled. Use IP when available; fall back to a SHA-256
+  // hash of the raw refresh-token cookie — giving each requester their own
+  // bucket without storing PII and without creating a shared "anon" superbucket.
+  const rawTokenForKey = req.cookies.get("sevam_refresh")?.value;
+  let rlKey: string;
+  if (ip) {
+    rlKey = ip;
+  } else if (rawTokenForKey) {
+    const hashBuf = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(rawTokenForKey)
+    );
+    rlKey = "tok:" + Array.from(new Uint8Array(hashBuf))
+      .slice(0, 8)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  } else {
+    rlKey = "anon";
+  }
+  const rl = await checkRateLimit(sessionRefreshLimiter, rlKey);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests" },
+      {
+        status:  429,
+        headers: { "Retry-After": String(rl.retryAfter ?? 60) },
+      }
+    );
+  }
+
+  // rawTokenForKey was read above for the RL key — reuse it here
+  const rawRefreshToken = rawTokenForKey;
+  if (!rawRefreshToken) {
+    return NextResponse.json(null, { status: 401 });
+  }
+  const refreshPayload = await verifyRefreshToken(rawRefreshToken);
+  if (!refreshPayload) {
+    return NextResponse.json(null, { status: 401 });
+  }
+
   try {
-    const refreshToken = req.cookies.get("sevam_refresh")?.value;
-    if (!refreshToken) {
-      return NextResponse.json(null, { status: 401 });
-    }
-
-    const refreshPayload = await verifyRefreshToken(refreshToken);
-    if (!refreshPayload) {
-      return NextResponse.json(null, { status: 401 });
-    }
-
-    // Dynamically import Prisma so this route stays Node-only
     const { prisma } = await import("@/lib/db/prisma");
+    // refreshPayload already verified above — use its userId directly
     const user = await prisma.user.findUnique({
-      where: { id: refreshPayload.userId },
+      where:  { id: refreshPayload.userId },
       select: { id: true, phone: true, userType: true },
     });
 
@@ -33,8 +80,8 @@ export async function POST(req: NextRequest) {
     }
 
     const payload: SessionPayload = {
-      userId: user.id,
-      phone: user.phone,
+      userId:   user.id,
+      phone:    user.phone,
       userType: user.userType as UserType,
     };
 
@@ -43,28 +90,29 @@ export async function POST(req: NextRequest) {
       mintRefreshToken({ userId: user.id }),
     ]);
 
-    const res = NextResponse.json(payload);
+    const res          = NextResponse.json(payload);
     const isProduction = process.env.NODE_ENV === "production";
 
     res.cookies.set("sevam_session", accessToken, {
       httpOnly: true,
-      secure: isProduction,
+      secure:   isProduction,
       sameSite: "lax",
-      path: "/",
-      maxAge: 15 * 60,
+      path:     "/",
+      maxAge:   15 * 60,
     });
 
     res.cookies.set("sevam_refresh", newRefresh, {
       httpOnly: true,
-      secure: isProduction,
+      secure:   isProduction,
       sameSite: "lax",
-      path: "/",
-      maxAge: 30 * 24 * 60 * 60,
+      path:     "/",
+      maxAge:   30 * 24 * 60 * 60, // 30 days — consistent with JWT TTL and login flow
     });
 
     return res;
   } catch (err) {
-    console.error("[session-refresh] Error:", err);
-    return NextResponse.json(null, { status: 500 });
+    // ── P0-B3: Auth failures are critical ────────────────────────────────
+    captureCritical(err, { action: "session-refresh" });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
