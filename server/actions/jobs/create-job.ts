@@ -60,6 +60,13 @@ export async function createJob(
   const description = sanitizeDescription(parsed.data.description);
   const address     = sanitizeAddress(parsed.data.address);
 
+  // Re-validate sanitized values — stripping HTML can shrink inputs below the
+  // Zod constraints that were checked before sanitization.
+  if (description.length < 10)
+    return { ok: false, error: "Description must be at least 10 characters.", code: "SERVER_ERROR" };
+  if (address.length < 5)
+    return { ok: false, error: "Address is required.", code: "SERVER_ERROR" };
+
   // Estimate price (no worker location yet — use base price)
   const { total: estimatedPrice } = estimatePrice(type as JobType);
 

@@ -22,7 +22,9 @@ import type { ActionResult } from "@/types/auth";
  * 3. DB rate limit:   max OTP_MAX_SENDS per OTP_WINDOW_MS window
  * 4. Generate 6-digit OTP, HMAC-hash it, upsert OtpVerification
  * 5. Send SMS via Twilio — on failure, roll back the OTP record so the
- *    send-count is not consumed and the user can retry immediately.
+ *    DB send-count is not consumed and the user can retry the DB window.
+ *    Note: the Redis rate-limit slot is not restored on SMS failure;
+ *    users have a separate 5/hr Redis budget that is consumed per attempt.
  */
 export async function sendOtp(rawPhone: string): Promise<ActionResult> {
   // ── 1. Validate phone ──────────────────────────────────────────────

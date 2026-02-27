@@ -33,7 +33,8 @@ export interface ErrorContext {
  * e.g. +919876543210 → +91XXXXXX10
  */
 function maskPhone(phone: string): string {
-  return phone.replace(/(+d{2})d{6}(d{2})$/, "$1XXXXXX$2");
+  // /(\.+\d{2})\d{6}(\d{2})$/ — escape + and use \d for digit class
+  return phone.replace(/(\+\d{2})\d{6}(\d{2})$/, "$1XXXXXX$2");
 }
 
 /** Apply common scope tags/user from ErrorContext. */

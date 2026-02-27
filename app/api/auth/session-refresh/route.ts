@@ -9,44 +9,47 @@ import type { SessionPayload, UserType } from "@/types/auth";
  *
  * Called internally by the middleware (edge) to refresh a session.
  * - P0-B1: Rate limited to 30 refresh attempts per IP per hour.
- *          If IP cannot be determined, rate limiting is skipped to avoid
- *          collapsing all clients into a shared "unknown" bucket.
+ *          Falls back to a per-userId bucket when IP is not available,
+ *          preventing a shared global bucket across all clients.
  * - P0-B3: Critical errors are captured by Sentry.
  */
 export async function POST(req: NextRequest) {
-  // ── P0-B1: Rate limit per IP ───────────────────────────────────────────
+  // ── P0-B1: Rate limit per IP (fallback: per userId from refresh token) ────
+  //
+  // Prefer IP so each device is bucketed independently.
+  // When IP is indeterminate (direct internal calls without a proxy), fall back
+  // to the userId extracted from the refresh token — prevents a shared global
+  // "unknown" bucket while still protecting per-user refresh rate.
   const ip =
     req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
     req.headers.get("x-real-ip") ||
     null;
 
-  // Skip rate-limiting when IP is indeterminate — using "unknown" would collapse
-  // all unidentifiable clients into one shared 30/hr bucket.
-  if (ip) {
-    const rl = await checkRateLimit(sessionRefreshLimiter, ip);
-    if (!rl.allowed) {
-      return NextResponse.json(
-        { error: "Too many requests" },
-        {
-          status:  429,
-          headers: { "Retry-After": String(rl.retryAfter ?? 60) },
-        }
-      );
-    }
+  // Verify the refresh token early so we can use the userId as a fallback key.
+  const rawRefreshToken = req.cookies.get("sevam_refresh")?.value;
+  if (!rawRefreshToken) {
+    return NextResponse.json(null, { status: 401 });
+  }
+  const refreshPayload = await verifyRefreshToken(rawRefreshToken);
+  if (!refreshPayload) {
+    return NextResponse.json(null, { status: 401 });
+  }
+
+  const rlKey = ip ?? `user:${refreshPayload.userId}`;
+  const rl = await checkRateLimit(sessionRefreshLimiter, rlKey);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests" },
+      {
+        status:  429,
+        headers: { "Retry-After": String(rl.retryAfter ?? 60) },
+      }
+    );
   }
 
   try {
-    const refreshToken = req.cookies.get("sevam_refresh")?.value;
-    if (!refreshToken) {
-      return NextResponse.json(null, { status: 401 });
-    }
-
-    const refreshPayload = await verifyRefreshToken(refreshToken);
-    if (!refreshPayload) {
-      return NextResponse.json(null, { status: 401 });
-    }
-
     const { prisma } = await import("@/lib/db/prisma");
+    // refreshPayload already verified above — use its userId directly
     const user = await prisma.user.findUnique({
       where:  { id: refreshPayload.userId },
       select: { id: true, phone: true, userType: true },

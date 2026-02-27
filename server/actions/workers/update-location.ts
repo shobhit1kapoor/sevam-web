@@ -107,7 +107,15 @@ export async function updateWorkerLocation(
  * Toggle a worker's online/offline status.
  * Used by the worker dashboard header toggle.
  */
+const OnlineStatusSchema = z.object({ isOnline: z.boolean() });
+
 export async function setWorkerOnlineStatus(isOnline: boolean): Promise<ActionResult> {
+  // Runtime Zod validation — TypeScript types alone are insufficient for server-action input
+  const parsed = OnlineStatusSchema.safeParse({ isOnline });
+  if (!parsed.success) {
+    return { ok: false, error: "Invalid input.", code: "SERVER_ERROR" };
+  }
+
   const session = await getSession();
   if (!session || session.userType !== "WORKER") {
     return { ok: false, error: "Not authenticated.", code: "SERVER_ERROR" };
@@ -117,7 +125,7 @@ export async function setWorkerOnlineStatus(isOnline: boolean): Promise<ActionRe
     // updateMany avoids a P2025 RecordNotFound error if the profile doesn't exist yet.
     const { count } = await prisma.workerProfile.updateMany({
       where: { userId: session.userId },
-      data:  { isOnline },
+      data:  { isOnline: parsed.data.isOnline },
     });
 
     if (count === 0) {
