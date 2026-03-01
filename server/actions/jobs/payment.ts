@@ -332,6 +332,23 @@ export async function issueRefund(
   const refundClaim = `${REFUND_CLAIM_PREFIX}${crypto.randomUUID()}`;
 
   try {
+    const razorpay = getRazorpay();
+    const paymentsClient = razorpay.payments as unknown as {
+      allRefunds?: (paymentId: string) => Promise<{ items?: Array<{ id: string }> }>;
+    };
+
+    if (typeof paymentsClient.allRefunds === "function") {
+      const existingRefunds = await paymentsClient.allRefunds(payment.razorpayPaymentId);
+      const existingRefundId = existingRefunds.items?.[0]?.id;
+      if (existingRefundId) {
+        await prisma.payment.updateMany({
+          where: { jobId, status: "SUCCESS" },
+          data: { status: "REFUNDED", razorpayRefundId: existingRefundId },
+        });
+        return { ok: true, data: { refundId: existingRefundId } };
+      }
+    }
+
     const guard = await prisma.payment.updateMany({
       where: { jobId, status: "SUCCESS", razorpayRefundId: null },
       data: { razorpayRefundId: refundClaim },
@@ -345,7 +362,6 @@ export async function issueRefund(
       return { ok: false, error: "Refund already in progress or status changed.", code: "SERVER_ERROR" };
     }
 
-    const razorpay = getRazorpay();
     const refund = await razorpay.payments.refund(payment.razorpayPaymentId, {
       amount: refundAmount,
     });

@@ -56,7 +56,7 @@ export async function createReview(
 
   const job = await prisma.job.findUnique({
     where: { id: jobId },
-    select: { customerId: true, workerId: true, status: true, review: true },
+    select: { customerId: true, workerId: true, status: true },
   });
 
   if (!job)                             return { ok: false, error: "Job not found.", code: "SERVER_ERROR" };

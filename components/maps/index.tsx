@@ -23,7 +23,7 @@ import type { JobMapProps } from "./JobMap";
 import type { TrackingMapProps } from "./TrackingMap";
 
 // ── Shared skeleton ──────────────────────────────────────────────────────────
-export function MapSkeleton({ height = 240 }: { height?: number }) {
+export function MapSkeleton({ height = 240 }: { height?: number | string }) {
   return (
     <div
       role="status"

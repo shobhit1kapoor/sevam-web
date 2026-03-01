@@ -67,6 +67,7 @@ export function useOfflineQueue<TInput>({
   flushRef.current = onFlushComplete;
   const onDroppedRef = useRef(onDropped);
   onDroppedRef.current = onDropped;
+  const queueWriteChainRef = useRef<Promise<void>>(Promise.resolve());
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -92,6 +93,17 @@ export function useOfflineQueue<TInput>({
     [storageKey],
   );
 
+  const appendToQueue = useCallback(
+    (item: QueuedAction<TInput> & { retries: number }) => {
+      queueWriteChainRef.current = queueWriteChainRef.current.then(() => {
+        const queue = readQueue();
+        writeQueue([...queue, item]);
+      });
+      return queueWriteChainRef.current;
+    },
+    [readQueue, writeQueue],
+  );
+
   // ── Flush ──────────────────────────────────────────────────────────────────
 
   const flushingRef = useRef(false);
@@ -103,10 +115,7 @@ export function useOfflineQueue<TInput>({
 
     try {
       const queue = readQueue();
-      if (queue.length === 0) {
-        flushingRef.current = false;
-        return;
-      }
+      if (queue.length === 0) return;
 
       const remaining: typeof queue = [];
 
@@ -165,21 +174,18 @@ export function useOfflineQueue<TInput>({
           try {
             const ok = await executeRef.current(input);
             if (!ok) {
-              const queue = readQueue();
-              writeQueue([...queue, item]);
+              await appendToQueue(item);
             }
           } catch {
-            const queue = readQueue();
-            writeQueue([...queue, item]);
+            await appendToQueue(item);
           }
         })();
         return;
       }
 
-      const queue = readQueue();
-      writeQueue([...queue, item]);
+      void appendToQueue(item);
     },
-    [readQueue, writeQueue],
+    [appendToQueue],
   );
 
   const queueLength = useCallback(() => readQueue().length, [readQueue]);
