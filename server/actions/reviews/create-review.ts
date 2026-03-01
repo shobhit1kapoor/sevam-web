@@ -48,8 +48,8 @@ export async function createReview(
   }
 
   const session = await getSession();
-  if (!session) return { ok: false, error: "Not authenticated.", code: "SERVER_ERROR" };
-  if (session.userType !== "CUSTOMER") return { ok: false, error: "Only customers can submit reviews.", code: "SERVER_ERROR" };
+  if (!session) return { ok: false, error: "Not authenticated.", code: "UNAUTHORIZED" };
+  if (session.userType !== "CUSTOMER") return { ok: false, error: "Only customers can submit reviews.", code: "FORBIDDEN" };
 
   const { jobId, rating, comment } = parsed.data;
 
@@ -59,7 +59,7 @@ export async function createReview(
   });
 
   if (!job)                             return { ok: false, error: "Job not found.", code: "SERVER_ERROR" };
-  if (job.customerId !== session.userId) return { ok: false, error: "Not authorised.", code: "SERVER_ERROR" };
+  if (job.customerId !== session.userId) return { ok: false, error: "Not authorised.", code: "FORBIDDEN" };
   if (job.status !== "COMPLETED")        return { ok: false, error: "You can only review a completed job.", code: "SERVER_ERROR" };
   if (job.review)                        return { ok: false, error: "You have already reviewed this job.", code: "SERVER_ERROR" };
   if (!job.workerId)                     return { ok: false, error: "No worker assigned to this job.", code: "SERVER_ERROR" };
@@ -142,7 +142,7 @@ export async function getWorkerReviews(
         id:           r.id,
         rating:       r.rating,
         comment:      r.comment,
-        customerName: r.customer.name,
+        customerName: r.customer?.name ?? null,
         createdAt:    r.createdAt,
       })),
     };

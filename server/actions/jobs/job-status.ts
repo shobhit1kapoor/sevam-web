@@ -193,7 +193,7 @@ export async function completeJob(
 export async function cancelJob(
   jobId: string,
   reason?: string,
-): Promise<ActionResult> {
+): Promise<ActionResult<{ penaltyApplied: boolean } | undefined>> {
   // ── Zod validation ─────────────────────────────────────────────────────────
   const parsed = CancelJobSchema.safeParse({ jobId, reason });
   if (!parsed.success) {

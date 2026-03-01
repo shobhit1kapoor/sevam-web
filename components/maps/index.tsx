@@ -29,10 +29,11 @@ export function MapSkeleton({ height = 240 }: { height?: number }) {
     <div
       role="status"
       aria-busy="true"
-      aria-label="Loading map…"
       className="w-full rounded-xl bg-muted/40 animate-pulse"
       style={{ height }}
-    />
+    >
+      <span className="sr-only">Loading map…</span>
+    </div>
   );
 }
 

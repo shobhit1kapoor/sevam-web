@@ -28,6 +28,11 @@ interface UseOfflineQueueOptions<TInput> {
    * Called after all pending items have been processed.
    */
   onFlushComplete?: () => void;
+  /**
+   * Called when an item is permanently dropped after exhausting all retries.
+   * Use this to log, alert, or surface lost actions to the user.
+   */
+  onDropped?: (input: TInput, id: string) => void;
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
@@ -54,11 +59,14 @@ export function useOfflineQueue<TInput>({
   execute,
   maxRetries = 3,
   onFlushComplete,
+  onDropped,
 }: UseOfflineQueueOptions<TInput>) {
   const executeRef = useRef(execute);
   executeRef.current = execute;
   const flushRef = useRef(onFlushComplete);
   flushRef.current = onFlushComplete;
+  const onDroppedRef = useRef(onDropped);
+  onDroppedRef.current = onDropped;
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -99,7 +107,11 @@ export function useOfflineQueue<TInput>({
 
       for (const item of queue) {
         const retries = item.retries ?? 0;
-        if (retries >= maxRetries) continue; // drop exhausted items
+        if (retries >= maxRetries) {
+          // Notify caller that an item was permanently dropped
+          onDroppedRef.current?.(item.input, item.id);
+          continue;
+        }
 
         try {
           const ok = await executeRef.current(item.input);

@@ -67,20 +67,22 @@ export async function createPaymentOrder(
     const existing = await prisma.payment.findUnique({
       where: { idempotencyKey },
     });
-    if (existing?.razorpayOrderId && existing.status === "PENDING") {
-      // Verify the cached payment belongs to the requested job
+    if (existing) {
+      // Reject cross-job reuse of the same idempotency key regardless of status
       if (existing.jobId !== jobId) {
         return { ok: false, error: "Idempotency key is already associated with another job.", code: "SERVER_ERROR" };
       }
-      return {
-        ok: true,
-        data: {
-          orderId:  existing.razorpayOrderId,
-          amount:   Math.round(Number(existing.amount) * 100),
-          currency: "INR",
-          keyId:    process.env.RAZORPAY_KEY_ID ?? "",
-        },
-      };
+      if (existing.razorpayOrderId && existing.status === "PENDING") {
+        return {
+          ok: true,
+          data: {
+            orderId:  existing.razorpayOrderId,
+            amount:   Math.round(Number(existing.amount) * 100),
+            currency: "INR",
+            keyId:    process.env.RAZORPAY_KEY_ID ?? "",
+          },
+        };
+      }
     }
   }
 
@@ -100,6 +102,36 @@ export async function createPaymentOrder(
   const amountPaise = Math.round(Number(job.finalPrice ?? job.estimatedPrice) * 100);
 
   try {
+    // Atomically claim the idempotency key / job slot BEFORE the provider call.
+    // The unique constraint on idempotencyKey and jobId prevent two concurrent
+    // requests from both proceeding past this point.
+    const claimed = await prisma.payment.upsert({
+      where: { jobId },
+      create: {
+        jobId,
+        amount:          amountPaise / 100,
+        status:          "PENDING",
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+      },
+      update: {
+        // Only claim if no order has been created yet
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+      },
+    });
+
+    // If another request already created a Razorpay order, return it
+    if (claimed.razorpayOrderId && claimed.status === "PENDING") {
+      return {
+        ok: true,
+        data: {
+          orderId:  claimed.razorpayOrderId,
+          amount:   Math.round(Number(claimed.amount) * 100),
+          currency: "INR",
+          keyId:    process.env.RAZORPAY_KEY_ID ?? "",
+        },
+      };
+    }
+
     const razorpay = getRazorpay();
     const order = await razorpay.orders.create({
       amount:   amountPaise,
@@ -107,21 +139,27 @@ export async function createPaymentOrder(
       receipt:  jobId,
     });
 
-    await prisma.payment.upsert({
-      where: { jobId },
-      create: {
-        jobId,
-        amount:          amountPaise / 100,
-        razorpayOrderId: order.id,
-        status:          "PENDING",
-        ...(idempotencyKey ? { idempotencyKey } : {}),
-      },
-      update: {
-        razorpayOrderId: order.id,
-        status:          "PENDING",
-        ...(idempotencyKey ? { idempotencyKey } : {}),
-      },
+    // Persist the Razorpay order ID — only if no other request beat us to it.
+    const saved = await prisma.payment.updateMany({
+      where: { jobId, razorpayOrderId: null },
+      data:  { razorpayOrderId: order.id },
     });
+
+    // If another request already set a different order, return that instead.
+    if (saved.count === 0) {
+      const current = await prisma.payment.findUnique({ where: { jobId } });
+      if (current?.razorpayOrderId) {
+        return {
+          ok: true,
+          data: {
+            orderId:  current.razorpayOrderId,
+            amount:   Math.round(Number(current.amount) * 100),
+            currency: "INR",
+            keyId:    process.env.RAZORPAY_KEY_ID ?? "",
+          },
+        };
+      }
+    }
 
     return {
       ok: true,
@@ -251,11 +289,12 @@ export async function issueRefund(
   }
 
   try {
-    // Use an atomic updateMany with status guard to prevent double-refunds.
-    // If a concurrent request already changed the status, count === 0 and we bail.
+    // Atomically mark as FAILED to claim the refund slot. We use FAILED as
+    // an intermediate "refund-requested" state. Only SUCCESS → FAILED
+    // succeeds, so concurrent requests are blocked.
     const guard = await prisma.payment.updateMany({
       where: { jobId, status: "SUCCESS" },
-      data:  { status: "REFUNDED" },
+      data:  { status: "FAILED" },
     });
     if (guard.count === 0) {
       return { ok: false, error: "Refund already in progress or status changed.", code: "SERVER_ERROR" };
@@ -266,16 +305,19 @@ export async function issueRefund(
       amount: refundAmount,
     });
 
+    // Provider succeeded — finalize to REFUNDED with the refund ID.
     await prisma.payment.update({
       where: { jobId },
-      data:  { razorpayRefundId: refund.id },
+      data:  { status: "REFUNDED", razorpayRefundId: refund.id },
     });
 
     return { ok: true, data: { refundId: refund.id } };
   } catch (err) {
-    // Attempt to revert to SUCCESS so the admin can retry.
+    // Revert the intermediate FAILED state back to SUCCESS so the admin can
+    // retry. Only revert if razorpayRefundId is still null (meaning the
+    // provider call didn't actually succeed).
     await prisma.payment.updateMany({
-      where: { jobId, status: "REFUNDED", razorpayRefundId: null },
+      where: { jobId, status: "FAILED", razorpayRefundId: null },
       data:  { status: "SUCCESS" },
     }).catch(() => null);
 

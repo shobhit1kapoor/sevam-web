@@ -107,13 +107,15 @@ export default function CustomerJobsPage() {
           <p className="text-sm mt-1">Book your first service to get started!</p>
         </div>
       ) : (
-        <ul id="job-list" role="tabpanel" aria-live="polite" className="space-y-3">
-          {jobs.map((job) => (
-            <li key={job.id}>
-              <JobCard job={job} />
-            </li>
-          ))}
-        </ul>
+        <div id="job-list" role="tabpanel" aria-live="polite">
+          <ul className="space-y-3">
+            {jobs.map((job) => (
+              <li key={job.id}>
+                <JobCard job={job} />
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );
