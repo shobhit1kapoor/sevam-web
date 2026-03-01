@@ -193,7 +193,7 @@ export async function completeJob(
 export async function cancelJob(
   jobId: string,
   reason?: string,
-): Promise<ActionResult<{ penaltyApplied: boolean } | undefined>> {
+): Promise<ActionResult<{ penaltyApplied: boolean }>> {
   // ── Zod validation ─────────────────────────────────────────────────────────
   const parsed = CancelJobSchema.safeParse({ jobId, reason });
   if (!parsed.success) {
@@ -246,13 +246,15 @@ export async function cancelJob(
     job.status === "ACCEPTED" &&
     job.workerId !== null;
 
+  const pendingPushes: Array<{ token: string; title: string; body: string }> = [];
+
   try {
     await prisma.$transaction(async (tx) => {
       if (userType === "WORKER") {
         // Worker declines → job returns to PENDING, worker assignment cleared.
         // Use updateMany with status guard to prevent stale-read race.
         const updated = await tx.job.updateMany({
-          where: { id: jobId, status: "ACCEPTED" },
+          where: { id: jobId, status: "ACCEPTED", workerId: job.workerId },
           data: {
             status:     "PENDING",
             workerId:   null,
@@ -274,11 +276,11 @@ export async function cancelJob(
           },
         });
         if (job.customer?.fcmToken) {
-          await sendPushNotification(job.customer.fcmToken, {
+          pendingPushes.push({
+            token: job.customer.fcmToken,
             title: "Worker cancelled",
             body:  "Your assigned worker cancelled. We're finding you a new one.",
-            data:  { jobId },
-          }).catch(() => null);
+          });
         }
       } else {
         // Customer or admin cancels → terminal CANCELLED state.
@@ -309,11 +311,11 @@ export async function cancelJob(
             },
           });
           if (job.worker.user?.fcmToken) {
-            await sendPushNotification(job.worker.user.fcmToken, {
+            pendingPushes.push({
+              token: job.worker.user.fcmToken,
               title: "Job cancelled",
               body:  "The customer has cancelled this job.",
-              data:  { jobId },
-            }).catch(() => null);
+            });
           }
         }
       }
@@ -323,5 +325,13 @@ export async function cancelJob(
     return { ok: false, error: "Failed to cancel job. Please try again.", code: "SERVER_ERROR" };
   }
 
-  return { ok: true, ...(penaltyApplied ? { data: { penaltyApplied: true } } : {}) };
+  for (const push of pendingPushes) {
+    await sendPushNotification(push.token, {
+      title: push.title,
+      body:  push.body,
+      data:  { jobId },
+    }).catch(() => null);
+  }
+
+  return { ok: true, data: { penaltyApplied } };
 }

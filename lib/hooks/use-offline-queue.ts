@@ -84,7 +84,9 @@ export function useOfflineQueue<TInput>({
       try {
         localStorage.setItem(storageKey, JSON.stringify(items));
       } catch {
-        // localStorage full or unavailable — silently drop.
+        for (const item of items) {
+          onDroppedRef.current?.(item.input, item.id);
+        }
       }
     },
     [storageKey],
@@ -146,20 +148,32 @@ export function useOfflineQueue<TInput>({
 
   const enqueue = useCallback(
     (input: TInput) => {
-      // If we're online, execute immediately without persisting to queue.
-      // This avoids the item replaying on the next flush.
-      if (navigator.onLine) {
-        void executeRef.current(input);
-        return;
-      }
-
-      const queue = readQueue();
       const item: QueuedAction<TInput> & { retries: number } = {
         id:        crypto.randomUUID(),
         input,
         createdAt: Date.now(),
         retries:   0,
       };
+
+      // If we're online, execute immediately without persisting to queue.
+      // If immediate execution fails, enqueue for deferred retry.
+      if (navigator.onLine) {
+        void (async () => {
+          try {
+            const ok = await executeRef.current(input);
+            if (!ok) {
+              const queue = readQueue();
+              writeQueue([...queue, item]);
+            }
+          } catch {
+            const queue = readQueue();
+            writeQueue([...queue, item]);
+          }
+        })();
+        return;
+      }
+
+      const queue = readQueue();
       writeQueue([...queue, item]);
     },
     [readQueue, writeQueue],

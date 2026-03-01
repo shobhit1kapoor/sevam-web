@@ -1,7 +1,7 @@
 /**
  * Lazy-loaded map exports using Next.js dynamic imports.
  *
- * Map libraries (Leaflet, Mapbox, etc.) are large and browser-only.
+ * Google Maps components (@react-google-maps/api) are browser-only.
  * Dynamic imports ensure they are excluded from the server bundle and only
  * loaded when the component is actually rendered on the client.
  *

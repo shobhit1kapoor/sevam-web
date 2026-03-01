@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db/prisma";
 import { getSession } from "@/lib/auth/session";
 import { captureError } from "@/lib/utils/monitoring";
 import type { ActionResult } from "@/types/auth";
+import { Prisma } from "@/lib/generated/prisma/client";
 
 // ─── Validation schemas ──────────────────────────────────────────────────────
 
@@ -61,7 +62,6 @@ export async function createReview(
   if (!job)                             return { ok: false, error: "Job not found.", code: "SERVER_ERROR" };
   if (job.customerId !== session.userId) return { ok: false, error: "Not authorised.", code: "FORBIDDEN" };
   if (job.status !== "COMPLETED")        return { ok: false, error: "You can only review a completed job.", code: "SERVER_ERROR" };
-  if (job.review)                        return { ok: false, error: "You have already reviewed this job.", code: "SERVER_ERROR" };
   if (!job.workerId)                     return { ok: false, error: "No worker assigned to this job.", code: "SERVER_ERROR" };
 
   try {
@@ -96,6 +96,9 @@ export async function createReview(
 
     return { ok: true, data: { reviewId: review.id } };
   } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      return { ok: false, error: "You have already reviewed this job.", code: "SERVER_ERROR" };
+    }
     captureError(err, { action: "createReview", jobId });
     return { ok: false, error: "Failed to submit review. Please try again.", code: "SERVER_ERROR" };
   }
@@ -115,12 +118,24 @@ export async function getWorkerReviews(
   workerId: string,
   limit = 10,
 ): Promise<ActionResult<WorkerReview[]>> {
+  const session = await getSession();
+  if (!session) return { ok: false, error: "Not authenticated.", code: "UNAUTHORIZED" };
+
   // ── Zod validation ─────────────────────────────────────────────────────────
   const parsed = GetWorkerReviewsSchema.safeParse({ workerId, limit });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0].message, code: "SERVER_ERROR" };
   }
   const clampedLimit = parsed.data.limit;
+
+  if (session.userType === "WORKER") {
+    const profile = await prisma.workerProfile.findUnique({ where: { userId: session.userId }, select: { id: true } });
+    if (!profile || profile.id !== parsed.data.workerId) {
+      return { ok: false, error: "Not authorised.", code: "FORBIDDEN" };
+    }
+  } else if (session.userType !== "ADMIN") {
+    return { ok: false, error: "Not authorised.", code: "FORBIDDEN" };
+  }
 
   try {
     const reviews = await prisma.jobReview.findMany({
