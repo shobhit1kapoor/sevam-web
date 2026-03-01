@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { Suspense } from "react";
 import { StoreHydrator } from "@/components/StoreHydrator";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { OfflineBanner } from "@/components/OfflineBanner";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -31,8 +34,13 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        <OfflineBanner />
         <StoreHydrator />
-        {children}
+        <ErrorBoundary boundaryName="root">
+          <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" /></div>}>
+            {children}
+          </Suspense>
+        </ErrorBoundary>
       </body>
     </html>
   );

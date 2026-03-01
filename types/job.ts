@@ -1,7 +1,11 @@
-import type { JobType, JobStatus } from "@/lib/generated/prisma/client";
+import type { JobType, JobStatus, CancelledBy } from "@/lib/generated/prisma/client";
+import type { PriceEstimateV2 } from "@/lib/utils/pricing";
 
 // Re-export for convenience so app code doesn't import prisma directly
-export type { JobType, JobStatus };
+export type { JobType, JobStatus, CancelledBy };
+
+// Re-export V2 pricing type (extends PriceEstimate with surge + rating fields)
+export type { PriceEstimateV2 };
 
 export interface LatLng {
   lat: number;
@@ -91,3 +95,23 @@ export const JOB_STATUS_COLOR: Record<JobStatus, "default" | "accent" | "success
   CANCELLED:   "muted",
   DISPUTED:    "error",
 };
+
+// ─── Review ───────────────────────────────────────────────────────────────────
+
+export interface JobReviewSummary {
+  id:           string;
+  rating:       number;
+  comment:      string | null;
+  customerName: string | null;
+  createdAt:    Date;
+}
+
+/** Star rating display helper — returns an array of "full" | "half" | "empty" */
+export function ratingStars(rating: number): Array<"full" | "half" | "empty"> {
+  return Array.from({ length: 5 }, (_, i) => {
+    if (rating >= i + 1) return "full";
+    if (rating >= i + 0.5) return "half";
+    return "empty";
+  });
+}
+

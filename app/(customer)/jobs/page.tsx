@@ -60,10 +60,17 @@ export default function CustomerJobsPage() {
       </div>
 
       {/* Status filter tabs */}
-      <div className="flex gap-2 overflow-x-auto pb-1">
+      <div
+        role="tablist"
+        aria-label="Filter jobs by status"
+        className="flex gap-2 overflow-x-auto pb-1"
+      >
         {STATUS_TABS.map((tab) => (
           <button
             key={tab.value}
+            role="tab"
+            aria-selected={activeTab === tab.value}
+            aria-controls="job-list"
             onClick={() => setTab(tab.value)}
             className={cn(
               "shrink-0 rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
@@ -80,23 +87,35 @@ export default function CustomerJobsPage() {
       {loading ? (
         <PageSpinner />
       ) : error ? (
-        <div className="py-16 text-center text-muted">
-          <p className="text-4xl mb-3">⚠️</p>
+        <div role="alert" aria-live="assertive" className="py-16 text-center text-muted">
+          <p className="text-4xl mb-3" aria-hidden="true">⚠️</p>
           <p className="font-medium">Failed to load jobs</p>
           <p className="text-sm mt-1">{error}</p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-4"
+            onClick={() => load(activeTab === "ALL" ? undefined : activeTab)}
+          >
+            Try again
+          </Button>
         </div>
       ) : jobs.length === 0 ? (
         <div className="py-16 text-center text-muted">
-          <p className="text-4xl mb-3">🔧</p>
+          <p className="text-4xl mb-3" aria-hidden="true">🔧</p>
           <p className="font-medium">No jobs found</p>
           <p className="text-sm mt-1">Book your first service to get started!</p>
         </div>
       ) : (
-        <ul className="space-y-3">
-          {jobs.map((job) => (
-            <JobCard key={job.id} job={job} />
-          ))}
-        </ul>
+        <div id="job-list" role="tabpanel" aria-live="polite">
+          <ul className="space-y-3">
+            {jobs.map((job) => (
+              <li key={job.id}>
+                <JobCard job={job} />
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );
