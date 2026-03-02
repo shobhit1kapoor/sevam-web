@@ -5,14 +5,14 @@ A home services marketplace connecting customers with verified local workers. Cu
 ## Tech Stack
 
 | Layer | Technology |
-|---|---|
+| --- | --- |
 | Framework | Next.js 16 (App Router) |
 | Language | TypeScript |
 | Styling | Tailwind CSS v4, shadcn/ui |
 | Database | Supabase (Postgres) + Prisma ORM |
 | Auth | Custom Phone OTP + JWT (jose) |
 | Real-time | Supabase Realtime |
-| Maps | Google Maps API |
+| Maps | Mapbox |
 | Payments | Razorpay |
 | Notifications | Twilio SMS + Firebase FCM |
 | State | Zustand |
@@ -55,7 +55,7 @@ sevam-web/
 - Node.js 18+
 - A [Supabase](https://supabase.com) project
 - A [Razorpay](https://razorpay.com) account
-- A [Google Maps](https://console.cloud.google.com) API key with Maps JS + Places APIs enabled
+- A [Mapbox](https://www.mapbox.com/) access token
 
 ### Installation
 
@@ -103,8 +103,8 @@ TWILIO_FROM_NUMBER=
 # Firebase Cloud Messaging
 FCM_SERVICE_ACCOUNT_JSON=
 
-# Google Maps
-NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=
+# Mapbox
+NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN=
 
 # Razorpay
 RAZORPAY_KEY_ID=

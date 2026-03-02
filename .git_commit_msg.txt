@@ -1,0 +1,54 @@
+feat(improvements): pricing V2, reviews, cancellation, payment idempotency, offline support, lazy maps, Sentry ErrorBoundary, a11y
+
+Schema:
+- CancelledBy enum; cancellationReason/cancelledBy/penaltyApplied on Job
+- idempotencyKey + razorpayRefundId on Payment
+- JobReview model with 1-5 rating, auto-recalculates worker aggregate
+- Composite indexes: (workerId,status), (customerId,status), createdAt DESC
+
+Pricing V2 (lib/utils/pricing.ts):
+- Time-of-day surge: morning +20%, evening +25%, night/emergency +50% (IST)
+- Weekend +15% extra; worker rating premium >=4.5: +8%, <3.5: -5%
+- getCurrentSurgeLabel() export for UI badge display
+
+Phone utils (lib/utils/phone.ts):
+- Accept 91XXXXXXXXXX without plus, dots, zero-width spaces
+- tryNormalisePhone() (null on failure), deduplicatePhones(), improved maskPhone()
+
+Payment (server/actions/jobs/payment.ts):
+- createPaymentOrder() idempotencyKey param for safe client retries
+- verifyPayment() returns ok:true for already-SUCCESS payments
+- issueRefund() ADMIN-only action with Razorpay refund + DB update
+- Replaced console.error with captureError()
+
+Job cancellation (server/actions/jobs/job-status.ts):
+- cancelJob() accepts optional reason; workers can decline ACCEPTED jobs
+- Worker decline returns job to PENDING; late customer cancel sets penaltyApplied
+- Cross-notify other party via FCM + Notification record in transaction
+
+Review system (server/actions/reviews/create-review.ts):
+- createReview() guards: completed job, customer-only, one review per job
+- getWorkerReviews() with pagination
+- ratingStars() helper + JobReviewSummary type in types/job.ts
+
+ErrorBoundary (components/ErrorBoundary.tsx):
+- Reports to Sentry via captureException; shows Report Issue dialog
+- role=alert + aria-live=assertive; boundaryName prop
+
+MapErrorBoundary (components/MapErrorBoundary.tsx):
+- Lightweight non-blocking boundary specifically for map components
+
+Offline support:
+- OfflineBanner: fixed banner with offline/reconnected states + aria-live
+- useOfflineQueue hook: localStorage queue, auto-flush on reconnect, maxRetries
+
+Loading performance:
+- LazyJobMap / LazyTrackingMap via Next.js dynamic() (SSR excluded)
+- MapSkeleton animated placeholder; wrapped in MapErrorBoundary + Suspense
+
+Layout (app/layout.tsx):
+- Added OfflineBanner, global ErrorBoundary (root), Suspense wrapper
+
+Accessibility (app/(customer)/jobs/page.tsx):
+- role=tablist/tab/tabpanel; aria-selected, aria-controls, aria-live
+- Error state role=alert; aria-hidden on decorative emojis; Retry button

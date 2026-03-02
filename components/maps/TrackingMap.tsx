@@ -1,12 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import {
-  GoogleMap,
-  Marker,
-  Polyline,
-  useJsApiLoader,
-} from "@react-google-maps/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import mapboxgl from "mapbox-gl";
 import { Spinner } from "@/components/ui/spinner";
 
 import { LatLng } from "@/types/job";
@@ -20,38 +15,20 @@ export interface TrackingMapProps {
   className?: string;
 }
 
-const MAP_OPTIONS: google.maps.MapOptions = {
-  disableDefaultUI:  true,
-  zoomControl:       true,
-  clickableIcons:    false,
-  gestureHandling:   "greedy",
-};
+const MAP_STYLE = "mapbox://styles/mapbox/streets-v12";
+const ROUTE_SOURCE_ID = "worker-route";
+const ROUTE_LAYER_ID = "worker-route-line";
 
-const POLYLINE_OPTIONS = {
-  strokeColor:   "#3B82F6",
-  strokeOpacity: 0.8,
-  strokeWeight:  3,
-};
-
-// ─── Custom SVG icons ─────────────────────────────────────────────────────────
-
-const JOB_ICON = {
-  path: "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5S10.62 6.5 12 6.5s2.5 1.12 2.5 2.5S13.38 11.5 12 11.5z",
-  fillColor:    "#EF4444",
-  fillOpacity:  1,
-  strokeWeight: 0,
-  scale:        1.6,
-  anchor:       { x: 12, y: 24 } as google.maps.Point,
-};
-
-const WORKER_ICON = {
-  path: "M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z",
-  fillColor:    "#10B981",
-  fillOpacity:  1,
-  strokeWeight: 0,
-  scale:        1.6,
-  anchor:       { x: 12, y: 12 } as google.maps.Point,
-};
+function markerElement(color: string) {
+  const el = document.createElement("div");
+  el.style.width = "14px";
+  el.style.height = "14px";
+  el.style.borderRadius = "9999px";
+  el.style.backgroundColor = color;
+  el.style.border = "2px solid white";
+  el.style.boxShadow = "0 0 0 1px rgba(0,0,0,0.15)";
+  return el;
+}
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -61,21 +38,102 @@ export function TrackingMap({
   height = "400px",
   className,
 }: TrackingMapProps) {
-  const { isLoaded, loadError } = useJsApiLoader({
-    googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "",
-  });
-
-  const [map, setMap] = useState<google.maps.Map | null>(null);
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<mapboxgl.Map | null>(null);
+  const jobMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const workerMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
+  const [isLoaded, setIsLoaded] = useState(false);
   const prevWorkerRef = useRef<LatLng | undefined>(workerLocation);
   const hasFittedRef  = useRef(false);
 
-  const onLoad = useCallback((m: google.maps.Map) => {
-    setMap(m);
+  const upsertRoute = useCallback((map: mapboxgl.Map, path: [number, number][]) => {
+    const source = map.getSource(ROUTE_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
+    const geojson = {
+      type: "Feature",
+      geometry: {
+        type: "LineString",
+        coordinates: path,
+      },
+      properties: {},
+    } as const;
+
+    if (source) {
+      source.setData(geojson);
+      return;
+    }
+
+    map.addSource(ROUTE_SOURCE_ID, {
+      type: "geojson",
+      data: geojson,
+    });
+    map.addLayer({
+      id: ROUTE_LAYER_ID,
+      type: "line",
+      source: ROUTE_SOURCE_ID,
+      paint: {
+        "line-color": "#3b82f6",
+        "line-width": 3,
+        "line-opacity": 0.8,
+      },
+    });
   }, []);
+
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current || !mapboxToken) return;
+
+    mapboxgl.accessToken = mapboxToken;
+
+    const map = new mapboxgl.Map({
+      container: mapContainerRef.current,
+      style: MAP_STYLE,
+      center: [jobLocation.lng, jobLocation.lat],
+      zoom: 14,
+    });
+
+    map.addControl(new mapboxgl.NavigationControl(), "top-right");
+
+    map.on("load", () => {
+      setIsLoaded(true);
+
+      jobMarkerRef.current = new mapboxgl.Marker({ element: markerElement("#ef4444") })
+        .setLngLat([jobLocation.lng, jobLocation.lat])
+        .addTo(map);
+
+      if (workerLocation) {
+        workerMarkerRef.current = new mapboxgl.Marker({ element: markerElement("#10b981") })
+          .setLngLat([workerLocation.lng, workerLocation.lat])
+          .addTo(map);
+        upsertRoute(map, [
+          [workerLocation.lng, workerLocation.lat],
+          [jobLocation.lng, jobLocation.lat],
+        ]);
+      }
+    });
+
+    mapRef.current = map;
+
+    return () => {
+      jobMarkerRef.current?.remove();
+      workerMarkerRef.current?.remove();
+      map.remove();
+      mapRef.current = null;
+      jobMarkerRef.current = null;
+      workerMarkerRef.current = null;
+    };
+  }, [jobLocation.lat, jobLocation.lng, mapboxToken, upsertRoute, workerLocation]);
 
   // Pan to worker when location changes
   useEffect(() => {
+    const map = mapRef.current;
     if (!map || !workerLocation) return;
+
+    if (!workerMarkerRef.current) {
+      workerMarkerRef.current = new mapboxgl.Marker({ element: markerElement("#10b981") })
+        .setLngLat([workerLocation.lng, workerLocation.lat])
+        .addTo(map);
+    }
+
     if (
       prevWorkerRef.current?.lat === workerLocation.lat &&
       prevWorkerRef.current?.lng === workerLocation.lng
@@ -83,20 +141,36 @@ export function TrackingMap({
       return;
 
     prevWorkerRef.current = workerLocation;
-    map.panTo(workerLocation);
-  }, [map, workerLocation]);
+    workerMarkerRef.current.setLngLat([workerLocation.lng, workerLocation.lat]);
+    map.panTo([workerLocation.lng, workerLocation.lat]);
+
+    upsertRoute(map, [
+      [workerLocation.lng, workerLocation.lat],
+      [jobLocation.lng, jobLocation.lat],
+    ]);
+  }, [jobLocation.lat, jobLocation.lng, upsertRoute, workerLocation]);
+
+  // Keep job marker synced if job location changes
+  useEffect(() => {
+    if (!jobMarkerRef.current) return;
+    jobMarkerRef.current.setLngLat([jobLocation.lng, jobLocation.lat]);
+  }, [jobLocation]);
 
   // Fit bounds once when map + both markers are first available
   useEffect(() => {
+    const map = mapRef.current;
     if (!map || !workerLocation || hasFittedRef.current) return;
-    const bounds = new google.maps.LatLngBounds();
-    bounds.extend(jobLocation);
-    bounds.extend(workerLocation);
-    map.fitBounds(bounds, /* padding */ 60);
-    hasFittedRef.current = true;
-  }, [map, jobLocation, workerLocation]);
 
-  if (loadError || !process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY) {
+    const bounds = new mapboxgl.LngLatBounds(
+      [jobLocation.lng, jobLocation.lat],
+      [jobLocation.lng, jobLocation.lat]
+    );
+    bounds.extend([workerLocation.lng, workerLocation.lat]);
+    map.fitBounds(bounds, { padding: 60 });
+    hasFittedRef.current = true;
+  }, [jobLocation, workerLocation]);
+
+  if (!mapboxToken) {
     return (
       <div
         style={{ height }}
@@ -107,41 +181,14 @@ export function TrackingMap({
     );
  }
 
-  if (!isLoaded) {
-    return (
-      <div
-        style={{ height }}
-        className="flex items-center justify-center rounded-xl bg-surface-2"
-      >
-        <Spinner size="md" />
-      </div>
-    );
-  }
-
-  const polylinePath = workerLocation ? [workerLocation, jobLocation] : [];
-
   return (
-    <div style={{ height }} className={className}>
-      <GoogleMap
-        mapContainerStyle={{ width: "100%", height: "100%", borderRadius: "12px" }}
-        center={workerLocation ?? jobLocation}
-        zoom={14}
-        options={MAP_OPTIONS}
-        onLoad={onLoad}
-      >
-        {/* Job / destination marker */}
-        <Marker position={jobLocation} icon={JOB_ICON} title="Job location" />
-
-        {/* Worker marker */}
-        {workerLocation && (
-          <Marker position={workerLocation} icon={WORKER_ICON} title="Worker location" />
-        )}
-
-        {/* Line between worker and job */}
-        {polylinePath.length === 2 && (
-          <Polyline path={polylinePath} options={POLYLINE_OPTIONS} />
-        )}
-      </GoogleMap>
+    <div style={{ height }} className={`relative ${className ?? ""}`}>
+      <div ref={mapContainerRef} className="h-full w-full rounded-xl" />
+      {!isLoaded && (
+        <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-surface-2">
+          <Spinner size="md" />
+        </div>
+      )}
     </div>
   );
 }

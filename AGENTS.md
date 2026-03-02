@@ -14,7 +14,7 @@
 - `server/actions/` — server actions; `server/api/` — API routes.
 - `lib/db/` — Prisma client (PostgreSQL via Supabase); `lib/hooks/` — custom hooks; `lib/utils/` — shared utilities.
 - `components/` — reusable UI (`ui/`, `forms/`, `maps/`). Uses Radix UI, CVA, clsx, tailwind-merge.
-- **Auth**: Custom Phone OTP + JWT (jose, HS256). Server actions mint access (15 min) + refresh (30 day) tokens stored in HttpOnly cookies (`sevam_session`, `sevam_refresh`). No Supabase auth SDK. **Payments**: Razorpay. **Maps**: `@react-google-maps/api`. **SMS**: Twilio. **Push**: Firebase FCM HTTP v1.
+- **Auth**: Custom Phone OTP + JWT (jose, HS256). Server actions mint access (15 min) + refresh (30 day) tokens stored in HttpOnly cookies (`sevam_session`, `sevam_refresh`). No Supabase auth SDK. **Payments**: Razorpay. **Maps**: `mapbox-gl`. **SMS**: Twilio. **Push**: Firebase FCM HTTP v1.
 - **State**: Zustand (`skipHydration: true`). **Validation**: Zod. **Dates**: date-fns.
 
 ## Code Style

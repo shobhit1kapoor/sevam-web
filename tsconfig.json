@@ -18,6 +18,7 @@
         "name": "next"
       }
     ],
+    "types": ["node", "react", "react-dom"],
     "paths": {
       // The catchall alias is sufficient; the specific aliases below are
       // redundant but kept for IDE auto-import clarity.

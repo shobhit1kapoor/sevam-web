@@ -1,11 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import {
-  GoogleMap,
-  Marker,
-  useJsApiLoader,
-} from "@react-google-maps/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import mapboxgl from "mapbox-gl";
 import { Spinner } from "@/components/ui/spinner";
 
 import { LatLng } from "@/types/job";
@@ -24,12 +20,7 @@ export interface JobMapProps {
 }
 
 const DEFAULT_CENTER: LatLng = { lat: 20.5937, lng: 78.9629 }; // India centre
-const MAP_OPTIONS: google.maps.MapOptions = {
-  disableDefaultUI:  true,
-  zoomControl:       true,
-  clickableIcons:    false,
-  gestureHandling:   "greedy",
-};
+const MAP_STYLE = "mapbox://styles/mapbox/streets-v12";
 
 export function JobMap({
   center,
@@ -39,33 +30,79 @@ export function JobMap({
   height = "300px",
   className,
 }: JobMapProps) {
-  const { isLoaded, loadError } = useJsApiLoader({
-    googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "",
-  });
-
-  const mapRef = useRef<google.maps.Map | null>(null);
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<mapboxgl.Map | null>(null);
+  const markerRef = useRef<mapboxgl.Marker | null>(null);
   const [pin, setPin] = useState<LatLng | undefined>(value);
+  const [isLoaded, setIsLoaded] = useState(false);
+  const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
   // Sync pin when the value prop changes externally
   useEffect(() => {
     setPin(value);
   }, [value]);
 
-  const onLoad = useCallback((map: google.maps.Map) => {
-    mapRef.current = map;
-  }, []);
-
   const handleClick = useCallback(
-    (e: google.maps.MapMouseEvent) => {
-      if (!interactive || !e.latLng) return;
-      const latlng = { lat: e.latLng.lat(), lng: e.latLng.lng() };
+    (latlng: LatLng) => {
+      if (!interactive) return;
       setPin(latlng);
       onChange?.(latlng);
     },
     [interactive, onChange]
   );
 
-  if (loadError || !process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY) {
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current || !mapboxToken) return;
+
+    mapboxgl.accessToken = mapboxToken;
+
+    const initialCenter = center ?? pin ?? DEFAULT_CENTER;
+    const map = new mapboxgl.Map({
+      container: mapContainerRef.current,
+      style: MAP_STYLE,
+      center: [initialCenter.lng, initialCenter.lat],
+      zoom: center || pin ? 15 : 5,
+    });
+
+    map.addControl(new mapboxgl.NavigationControl(), "top-right");
+    map.on("load", () => setIsLoaded(true));
+
+    map.on("click", (e) => {
+      handleClick({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+    });
+
+    mapRef.current = map;
+
+    return () => {
+      markerRef.current?.remove();
+      markerRef.current = null;
+      map.remove();
+      mapRef.current = null;
+    };
+  }, [center, handleClick, mapboxToken, pin]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !pin) return;
+
+    if (!markerRef.current) {
+      markerRef.current = new mapboxgl.Marker({ color: "#ef4444" })
+        .setLngLat([pin.lng, pin.lat])
+        .addTo(map);
+      return;
+    }
+
+    markerRef.current.setLngLat([pin.lng, pin.lat]);
+  }, [pin]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !center) return;
+    map.setCenter([center.lng, center.lat]);
+    if (map.getZoom() < 12) map.setZoom(15);
+  }, [center]);
+
+  if (!mapboxToken) {
     return (
       <div
         style={{ height }}
@@ -76,29 +113,14 @@ export function JobMap({
     );
   }
 
-  if (!isLoaded) {
-    return (
-      <div
-        style={{ height }}
-        className="flex items-center justify-center rounded-xl bg-surface-2"
-      >
-        <Spinner size="md" />
-      </div>
-    );
-  }
-
   return (
-    <div style={{ height }} className={className}>
-      <GoogleMap
-        mapContainerStyle={{ width: "100%", height: "100%", borderRadius: "12px" }}
-        center={center ?? pin ?? DEFAULT_CENTER}
-        zoom={center || pin ? 15 : 5}
-        options={MAP_OPTIONS}
-        onLoad={onLoad}
-        onClick={handleClick}
-      >
-        {pin && <Marker position={pin} />}
-      </GoogleMap>
+    <div style={{ height }} className={`relative ${className ?? ""}`}>
+      <div ref={mapContainerRef} className="h-full w-full rounded-xl" />
+      {!isLoaded && (
+        <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-surface-2">
+          <Spinner size="md" />
+        </div>
+      )}
     </div>
   );
 }
