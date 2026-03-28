@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Search, ShoppingCart, ChevronDown, X } from 'lucide-react';
 import { supabase } from '@/lib/db/supabase';
@@ -14,12 +14,23 @@ type LocationResult = {
 
 const LOCATION_STORAGE_KEY = "sevam_selected_location";
 const PROFILE_STORAGE_KEY = "sevam_profile";
+const CART_STORAGE_KEY = 'sevam_service_cart';
+
+type CartStorageItem = {
+  price: number;
+  quantity: number;
+};
 
 type NavbarUser = {
   name: string;
   email: string;
   phone: string;
 };
+
+function cleanPhone(phone?: string) {
+  const value = (phone ?? "").trim();
+  return value.startsWith("oauth_") ? "" : value;
+}
 
 async function syncProfileToBackend(profile: NavbarUser, accessToken?: string) {
   if (!accessToken) return profile;
@@ -44,6 +55,8 @@ async function syncProfileToBackend(profile: NavbarUser, accessToken?: string) {
 
 export default function Navbar() {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<LocationResult[]>([]);
@@ -53,7 +66,35 @@ export default function Navbar() {
   const [selectedLocation, setSelectedLocation] = useState<LocationResult | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [authUser, setAuthUser] = useState<NavbarUser | null>(null);
+  const [navSearch, setNavSearch] = useState('');
+  const [cartSummary, setCartSummary] = useState({ itemCount: 0, total: 0 });
   const accountMenuRef = useRef<HTMLDivElement>(null);
+
+  const refreshCartSummary = () => {
+    try {
+      const raw = localStorage.getItem(CART_STORAGE_KEY);
+      if (!raw) {
+        setCartSummary({ itemCount: 0, total: 0 });
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as CartStorageItem[];
+      if (!Array.isArray(parsed)) {
+        setCartSummary({ itemCount: 0, total: 0 });
+        return;
+      }
+
+      const itemCount = parsed.reduce((sum, item) => sum + (Number.isFinite(item?.quantity) ? item.quantity : 0), 0);
+      const subtotal = parsed.reduce(
+        (sum, item) => sum + ((Number.isFinite(item?.price) ? item.price : 0) * (Number.isFinite(item?.quantity) ? item.quantity : 0)),
+        0
+      );
+      const total = subtotal + (itemCount > 0 ? 50 : 0);
+      setCartSummary({ itemCount, total });
+    } catch {
+      setCartSummary({ itemCount: 0, total: 0 });
+    }
+  };
 
   useEffect(() => {
     try {
@@ -94,6 +135,37 @@ export default function Navbar() {
   }, [menuOpen]);
 
   useEffect(() => {
+    refreshCartSummary();
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key && event.key !== CART_STORAGE_KEY) return;
+      refreshCartSummary();
+    };
+
+    const handleCartUpdated = () => {
+      refreshCartSummary();
+    };
+
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('sevam-cart-updated', handleCartUpdated);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('sevam-cart-updated', handleCartUpdated);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (pathname !== '/customer/search') {
+      setNavSearch('');
+      return;
+    }
+
+    const query = searchParams.get('q') ?? '';
+    setNavSearch(query);
+  }, [pathname, searchParams]);
+
+  useEffect(() => {
     let mounted = true;
 
     const syncSession = async () => {
@@ -110,7 +182,7 @@ export default function Navbar() {
       const fallbackProfile: NavbarUser = {
         name: (user.user_metadata?.full_name as string | undefined) ?? "Customer",
         email: user.email ?? "",
-        phone: user.phone ?? "",
+        phone: cleanPhone(user.phone ?? ""),
       };
       const syncedProfile = await syncProfileToBackend(fallbackProfile, data.session?.access_token);
       setAuthUser(syncedProfile);
@@ -129,7 +201,7 @@ export default function Navbar() {
       const fallbackProfile: NavbarUser = {
         name: (user.user_metadata?.full_name as string | undefined) ?? "Customer",
         email: user.email ?? "",
-        phone: user.phone ?? "",
+        phone: cleanPhone(user.phone ?? ""),
       };
       void (async () => {
         const syncedProfile = await syncProfileToBackend(fallbackProfile, session?.access_token);
@@ -244,6 +316,25 @@ export default function Navbar() {
 
   const locationLine = selectedLocation?.name ?? "Shivam Market, 2nd Floor, 1 Ner...";
 
+  const handleNavbarSearchChange = (value: string) => {
+    setNavSearch(value);
+    const query = value.trim();
+
+    if (!query) {
+      if (pathname === '/customer/search') {
+        router.replace('/customer/search');
+      }
+      return;
+    }
+
+    const target = `/customer/search?q=${encodeURIComponent(query)}`;
+    if (pathname === '/customer/search') {
+      router.replace(target);
+    } else {
+      router.push(target);
+    }
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
     localStorage.removeItem(PROFILE_STORAGE_KEY);
@@ -296,6 +387,8 @@ export default function Navbar() {
             <input 
               type="text" 
               placeholder='Search "paneer"' 
+              value={navSearch}
+              onChange={(e) => handleNavbarSearchChange(e.target.value)}
               className="bg-transparent outline-none w-full text-[14px] text-gray-800 placeholder-gray-500"
             />
           </div>
@@ -320,7 +413,7 @@ export default function Navbar() {
                     <p className="text-[30px] leading-none mb-1">👋</p>
                     <p className="text-[28px] leading-none mb-1">Hi</p>
                     <p className="text-[26px] leading-none font-semibold text-gray-900">{authUser.name || 'Account'}</p>
-                    <p className="text-[12px] text-gray-500 mt-2 truncate">{authUser.phone || authUser.email}</p>
+                    <p className="text-[12px] text-gray-500 mt-2 truncate">{cleanPhone(authUser.phone) || authUser.email || 'No contact added'}</p>
                   </div>
 
                   <div className="py-1">
@@ -345,13 +438,6 @@ export default function Navbar() {
                     >
                       Saved Addresses
                     </Link>
-                    <Link
-                      href="/customer/profile"
-                      onClick={() => setMenuOpen(false)}
-                      className="block px-4 py-2.5 text-[15px] text-gray-700 hover:bg-gray-50"
-                    >
-                      Account Privacy
-                    </Link>
                     <button
                       onClick={handleLogout}
                       className="w-full text-left px-4 py-2.5 text-[15px] text-red-600 hover:bg-red-50"
@@ -367,9 +453,19 @@ export default function Navbar() {
               Login
             </Link>
           )}
-          <button className="flex items-center bg-[#007FFF] hover:bg-[#0066CC] transition-colors text-white px-4 py-3.5 rounded-lg font-bold text-[14px]">
+          <button
+            onClick={() => router.push('/customer/services')}
+            className="flex items-center h-[56px] min-w-[122px] bg-[#007FFF] hover:bg-[#0066CC] transition-colors text-white pl-3 pr-2 rounded-lg font-bold"
+          >
             <ShoppingCart className="w-5 h-5 mr-2" />
-            My Cart
+            {cartSummary.itemCount > 0 ? (
+              <div className="leading-none text-left">
+                <p className="text-[13px] font-bold">{cartSummary.itemCount} items</p>
+                <p className="text-[18px] font-extrabold tracking-tight">₹{Math.round(cartSummary.total)}</p>
+              </div>
+            ) : (
+              <span className="text-[14px] font-bold">My Cart</span>
+            )}
           </button>
         </div>
       </nav>

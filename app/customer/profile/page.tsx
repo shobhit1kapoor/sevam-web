@@ -12,6 +12,63 @@ import { supabase } from '@/lib/db/supabase';
 
 const PROFILE_STORAGE_KEY = 'sevam_profile';
 
+type AddressLabel = 'HOME' | 'OFFICE' | 'OTHER';
+
+type AddressCard = {
+  id: string;
+  type: string;
+  label: AddressLabel;
+  address: string;
+  city: string;
+  isDefault: boolean;
+};
+
+type AddressesApiResponse = {
+  addresses: Array<{
+    id: string;
+    label: AddressLabel;
+    line1: string;
+    line2: string | null;
+    landmark: string | null;
+    city: string;
+    state: string;
+    pincode: string;
+    isDefault: boolean;
+  }>;
+};
+
+const FALLBACK_ADDRESSES: AddressCard[] = [
+  {
+    id: 'fallback-home',
+    type: 'Home',
+    label: 'HOME',
+    address: 'A-204, Skyline Apartments, Koramangala, 4th Block',
+    city: 'Bengaluru - 560034',
+    isDefault: true,
+  },
+  {
+    id: 'fallback-office',
+    type: 'Office',
+    label: 'OFFICE',
+    address: 'WeWork Galaxy, Level 8, Residency Road',
+    city: 'Bengaluru - 560025',
+    isDefault: false,
+  },
+  {
+    id: 'fallback-other',
+    type: 'Other',
+    label: 'OTHER',
+    address: 'Brigade Gateway, Flat 5C, Rajajinagar',
+    city: 'Bengaluru - 560010',
+    isDefault: false,
+  },
+];
+
+function cleanPhone(phone?: string) {
+  const value = (phone ?? '').trim();
+  return value.startsWith('oauth_') ? '' : value;
+}
+
 export default function ProfilePage() {
   const [activeTab, setActiveTab] = useState('personal-info');
   const [showPassword, setShowPassword] = useState(false);
@@ -24,6 +81,8 @@ export default function ProfilePage() {
   const [contactMsg, setContactMsg] = useState('');
   const [contactErr, setContactErr] = useState('');
   const [contactLoading, setContactLoading] = useState(false);
+  const [addresses, setAddresses] = useState<AddressCard[]>(FALLBACK_ADDRESSES);
+  const [addressesLoading, setAddressesLoading] = useState(false);
 
   const user = {
     name: profileOverride?.name || 'Customer',
@@ -44,11 +103,99 @@ export default function ProfilePage() {
 
       const parsed = JSON.parse(raw) as { name?: string; email?: string; phone?: string };
       if (parsed && (parsed.name || parsed.email || parsed.phone)) {
-        setProfileOverride(parsed);
+        setProfileOverride({
+          name: parsed.name,
+          email: parsed.email,
+          phone: cleanPhone(parsed.phone),
+        });
       }
     } catch {
       localStorage.removeItem(PROFILE_STORAGE_KEY);
     }
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadProfileAndAddresses = async () => {
+      try {
+        setAddressesLoading(true);
+        const { data } = await supabase.auth.getSession();
+        const accessToken = data.session?.access_token;
+
+        if (!accessToken) {
+          if (isMounted) {
+            setAddressesLoading(false);
+          }
+          return;
+        }
+
+        const [profileResponse, addressesResponse] = await Promise.all([
+          fetch('/api/customer/profile', {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+            cache: 'no-store',
+          }),
+          fetch('/api/customer/addresses', {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+            cache: 'no-store',
+          }),
+        ]);
+
+        if (isMounted && profileResponse.ok) {
+          const profileData = (await profileResponse.json()) as {
+            user?: { name?: string; phone?: string };
+            profile?: { email?: string };
+          };
+
+          if (profileData.user || profileData.profile) {
+            persistProfile({
+              name: profileData.user?.name,
+              email: profileData.profile?.email,
+              phone: cleanPhone(profileData.user?.phone),
+            });
+          }
+        }
+
+        if (isMounted && addressesResponse.ok) {
+          const addressesData = (await addressesResponse.json()) as AddressesApiResponse;
+          const mappedAddresses: AddressCard[] = (addressesData.addresses ?? []).map((addr) => {
+            const line2 = addr.line2?.trim() ? `, ${addr.line2.trim()}` : '';
+            const landmark = addr.landmark?.trim() ? `, ${addr.landmark.trim()}` : '';
+
+            return {
+              id: addr.id,
+              type: addr.label === 'HOME' ? 'Home' : addr.label === 'OFFICE' ? 'Office' : 'Other',
+              label: addr.label,
+              address: `${addr.line1}${line2}${landmark}`,
+              city: `${addr.city} - ${addr.pincode}`,
+              isDefault: addr.isDefault,
+            };
+          });
+
+          if (mappedAddresses.length > 0) {
+            setAddresses(mappedAddresses);
+          }
+        }
+      } catch {
+        // Keep fallback data to avoid blocking profile screen on transient failures.
+      } finally {
+        if (isMounted) {
+          setAddressesLoading(false);
+        }
+      }
+    };
+
+    void loadProfileAndAddresses();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const normalizePhone = (value: string) => {
@@ -153,12 +300,6 @@ export default function ProfilePage() {
       setContactLoading(false);
     }
   };
-
-  const addresses = [
-    { id: 1, type: 'Home', icon: Home, address: 'A-204, Skyline Apartments, Koramangala, 4th Block', city: 'Bengaluru - 560034', isDefault: true },
-    { id: 2, type: 'Office', icon: Briefcase, address: 'WeWork Galaxy, Level 8, Residency Road', city: 'Bengaluru - 560025', isDefault: false },
-    { id: 3, type: 'Other', icon: MapPinned, address: 'Brigade Gateway, Flat 5C, Rajajinagar', city: 'Bengaluru - 560010', isDefault: false },
-  ];
 
   const paymentMethods = [
     { id: 1, type: 'Google Pay', details: 'nikhil@oksbi', emoji: '🔵', color: '#3B82F6', isDefault: true },
@@ -377,8 +518,12 @@ export default function ProfilePage() {
                 </div>
 
                 <div style={{ padding: '20px 28px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {addressesLoading && (
+                    <p style={{ fontSize: 13, color: '#94A3B8' }}>Loading saved addresses...</p>
+                  )}
+
                   {addresses.map(addr => {
-                    const Icon = addr.icon;
+                    const Icon = addr.label === 'HOME' ? Home : addr.label === 'OFFICE' ? Briefcase : MapPinned;
                     return (
                       <div key={addr.id}
                         style={{ border: '1.5px solid #F1F5F9', borderRadius: 14, padding: '18px 20px', display: 'flex', alignItems: 'flex-start', gap: 16, transition: 'all 0.15s' }}

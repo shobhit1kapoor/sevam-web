@@ -1,30 +1,24 @@
 
 "use client"
 import Image from 'next/image';
+import { useEffect, useMemo, useState } from 'react';
 import Navbar from '@/components/dashboardnavbar';
 import Footer from '@/components/Footer';
+import type { ServiceCatalogApiResponse } from '@/types/service-catalog';
 
-const categories = [
-  "AC Repair\nServices",
-  "Home\nCleaning",
-  "Salon &\nBeauty",
-  "Electrician\nServices",
-  "Plumbing\nServices",
-  "Painting\nSolutions",
-  "Pest Control\nServices",
-  "Carpenter\nServices",
-  "Appliance\nRepair",
-  "Massage\nTherapy"
+const MOBILE_SPANS = [
+  'col-span-2',
+  'col-span-2',
+  'col-span-1',
+  'col-span-2',
+  'col-span-1',
+  'col-span-1',
+  'col-span-1',
+  'col-span-1',
+  'col-span-1',
 ];
 
-const serviceImages = [
-  '/homepage/services/clean.jpg',
-  '/homepage/services/electrician.jpg',
-  '/homepage/services/makeup.jpg',
-  '/homepage/services/massage.jpg',
-];
-
-const mobileCategories = [
+const fallbackMobileCategories = [
   { name: "AC Repair", span: "col-span-2" },
   { name: "Home Cleaning", span: "col-span-2" },
   { name: "Salon", span: "col-span-1" },
@@ -44,109 +38,21 @@ type Product = {
   deliveryTime: string;
 };
 
-const priceDropProducts: Product[] = [
-  {
-    name: "24 Mantra Low GI Flour",
-    currentPrice: "₹217",
-    originalPrice: "₹300",
-    image: "/homepage/services/clean.jpg",
-    deliveryTime: "8 MINS",
-  },
-  {
-    name: "Organic Tattva Brown Sugar",
-    currentPrice: "₹114",
-    originalPrice: "₹175",
-    image: "/homepage/services/makeup.jpg",
-    deliveryTime: "8 MINS",
-  },
-  {
-    name: "Virgin Coconut Oil",
-    currentPrice: "₹853",
-    originalPrice: "₹999",
-    image: "/homepage/services/electrician.jpg",
-    deliveryTime: "8 MINS",
-  },
-  {
-    name: "Organic Methi Seeds",
-    currentPrice: "₹26",
-    originalPrice: "₹30",
-    image: "/homepage/services/massage.jpg",
-    deliveryTime: "8 MINS",
-  },
-  {
-    name: "Floor & Surface Cleaner",
-    currentPrice: "₹113",
-    originalPrice: "₹265",
-    image: "/homepage/services/clean.jpg",
-    deliveryTime: "8 MINS",
-  },
-  {
-    name: "Sweet Karam Coffee Mix",
-    currentPrice: "₹160",
-    originalPrice: "₹186",
-    image: "/homepage/services/makeup.jpg",
-    deliveryTime: "8 MINS",
-  },
-  {
-    name: "The Baker Banana Cake",
-    currentPrice: "₹251",
-    originalPrice: "₹357",
-    image: "/homepage/services/electrician.jpg",
-    deliveryTime: "8 MINS",
-  },
-];
-
-const priceDropAlertProducts: Product[] = [
-  {
-    name: "The Baker's Dozen Vanilla Cake",
-    currentPrice: "₹249",
-    originalPrice: "₹348",
-    image: "/homepage/services/massage.jpg",
-    deliveryTime: "8 MINS",
-  },
-  {
-    name: "Tata Simply Better Virgin Coconut Oil",
-    currentPrice: "₹479",
-    originalPrice: "₹549",
-    image: "/homepage/services/electrician.jpg",
-    deliveryTime: "8 MINS",
-  },
-  {
-    name: "24 Mantra Low GI Flour",
-    currentPrice: "₹474",
-    originalPrice: "₹750",
-    image: "/homepage/services/clean.jpg",
-    deliveryTime: "8 MINS",
-  },
-  {
-    name: "Tata Sampann Meat Masala",
-    currentPrice: "₹64",
-    originalPrice: "₹97",
-    image: "/homepage/services/makeup.jpg",
-    deliveryTime: "8 MINS",
-  },
-  {
-    name: "The Baker's Dozen Chocolate Brownie",
-    currentPrice: "₹133",
-    originalPrice: "₹158",
-    image: "/homepage/services/massage.jpg",
-    deliveryTime: "8 MINS",
-  },
-  {
-    name: "Organic Tattva Organic Maida",
-    currentPrice: "₹43",
-    originalPrice: "₹65",
-    image: "/homepage/services/clean.jpg",
-    deliveryTime: "8 MINS",
-  },
-  {
-    name: "Sweet Kai Coffee Spice Mix",
-    currentPrice: "₹76",
-    originalPrice: "₹92",
-    image: "/homepage/services/makeup.jpg",
-    deliveryTime: "8 MINS",
-  },
-];
+function toProductCard(service: {
+  name: string;
+  price: number;
+  originalPrice: number | null;
+  image: string;
+  deliveryTime: string | null;
+}): Product {
+  return {
+    name: service.name,
+    currentPrice: `₹${Math.round(service.price)}`,
+    originalPrice: `₹${Math.round(service.originalPrice ?? service.price * 1.3)}`,
+    image: service.image,
+    deliveryTime: service.deliveryTime ?? "30 MINS",
+  };
+}
 
 function ProductListingSection({ title, products }: { title: string; products: Product[] }) {
   return (
@@ -195,6 +101,80 @@ function ProductListingSection({ title, products }: { title: string; products: P
 }
 
 export default function App() {
+  const [catalog, setCatalog] = useState<ServiceCatalogApiResponse | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadCatalog = async () => {
+      try {
+        const response = await fetch('/api/services/catalog', { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error('Catalog request failed');
+        }
+
+        const data = (await response.json()) as ServiceCatalogApiResponse;
+        if (isMounted) {
+          setCatalog(data);
+        }
+      } catch {
+        if (isMounted) {
+          setCatalog(null);
+        }
+      }
+    };
+
+    loadCatalog();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const categories = useMemo(() => {
+    const categoryList = catalog?.categories ?? [];
+    return categoryList.slice(0, 10).map((category) => category.name.replace(/\s+/g, '\n'));
+  }, [catalog]);
+
+  const serviceImages = useMemo(() => {
+    const categoryList = catalog?.categories ?? [];
+    return categoryList
+      .slice(0, 10)
+      .map((category) => category.services[0]?.image)
+      .filter((image): image is string => Boolean(image));
+  }, [catalog]);
+
+  const mobileCategories = useMemo(() => {
+    const categoryList = catalog?.categories ?? [];
+    if (categoryList.length === 0) {
+      return fallbackMobileCategories;
+    }
+
+    return categoryList.slice(0, 9).map((category, index) => ({
+      name: category.name,
+      span: MOBILE_SPANS[index] ?? 'col-span-1',
+    }));
+  }, [catalog]);
+
+  const allServices = useMemo(
+    () => (catalog?.categories ?? []).flatMap((category) => category.services),
+    [catalog]
+  );
+
+  const priceDropProducts = useMemo(
+    () => allServices.slice(0, 7).map(toProductCard),
+    [allServices]
+  );
+
+  const priceDropAlertProducts = useMemo(
+    () => allServices.slice(7, 14).map(toProductCard),
+    [allServices]
+  );
+
+  const renderServiceImages = serviceImages.length > 0
+    ? serviceImages
+    : ['/homepage/services/clean.jpg', '/homepage/services/electrician.jpg', '/homepage/services/makeup.jpg', '/homepage/services/massage.jpg'];
+
   return (
     <div className="min-h-screen bg-white font-[family-name:var(--font-pt-sans-narrow)]">
       <Navbar />
@@ -272,7 +252,7 @@ export default function App() {
             <div key={i} className="flex flex-col items-center cursor-pointer group">
               <div className="w-full aspect-square rounded-2xl bg-[#f3f6f8] mb-3 group-hover:shadow-md transition-all duration-200 overflow-hidden relative">
                 <Image
-                  src={serviceImages[i % serviceImages.length]}
+                  src={renderServiceImages[i % renderServiceImages.length]}
                   alt={cat.replace('\n', ' ')}
                   fill
                   className="object-cover group-hover:scale-105 transition-transform duration-200"
@@ -303,8 +283,12 @@ export default function App() {
           </div>
         </div>
 
-        <ProductListingSection title="Most booked services" products={priceDropProducts} />
-        <ProductListingSection title="Price Drop Alert!" products={priceDropAlertProducts} />
+        {priceDropProducts.length > 0 && (
+          <ProductListingSection title="Most booked services" products={priceDropProducts} />
+        )}
+        {priceDropAlertProducts.length > 0 && (
+          <ProductListingSection title="Price Drop Alert!" products={priceDropAlertProducts} />
+        )}
 
         <section className="mt-12">
           <Image

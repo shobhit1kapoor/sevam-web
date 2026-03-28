@@ -58,6 +58,74 @@ enum CancelledBy {
   SYSTEM
 }
 
+enum AddressLabel {
+  HOME
+  OFFICE
+  OTHER
+}
+
+enum PaymentMethodType {
+  UPI
+  CARD
+  NETBANKING
+  WALLET
+}
+
+enum WalletTxnType {
+  CREDIT
+  DEBIT
+}
+
+enum WalletTxnSource {
+  TOPUP
+  BOOKING_PAYMENT
+  REFUND
+  ADJUSTMENT
+}
+
+enum TicketCategory {
+  BOOKING
+  PAYMENT
+  REFUND
+  ACCOUNT
+  OTHER
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  IN_REVIEW
+  RESOLVED
+  CLOSED
+}
+
+enum TicketSenderType {
+  CUSTOMER
+  AGENT
+  SYSTEM
+}
+
+enum BookingEventActorType {
+  CUSTOMER
+  WORKER
+  ADMIN
+  SYSTEM
+}
+
+enum RefundStatus {
+  REQUESTED
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
 // ─── Models ───────────────────────────────────────────────────────────────────
 
 model User {
@@ -70,10 +138,17 @@ model User {
   updatedAt     DateTime       @updatedAt
 
   workerProfile WorkerProfile?
+  customerProfile CustomerProfile?
+  addresses     CustomerAddress[]
+  savedPaymentMethods SavedPaymentMethod[]
+  wallet        CustomerWallet?
   customerJobs  Job[]          @relation("CustomerJobs")
   notifications Notification[]
   disputes      JobDispute[]   @relation("CustomerDisputes")
   reviews       JobReview[]    @relation("CustomerReviews")
+  supportTickets SupportTicket[] @relation("CustomerSupportTickets")
+  supportMessages SupportTicketMessage[] @relation("SupportMessageSender")
+  bookingEvents BookingEvent[] @relation("BookingEventActor")
 
   @@index([userType])
   @@map("users")
@@ -104,6 +179,7 @@ model WorkerProfile {
   updatedAt       DateTime  @updatedAt
 
   jobs            Job[]        @relation("WorkerJobs")
+  bookingAssignments BookingAssignment[]
   disputes        JobDispute[] @relation("WorkerDisputes")
   reviews         JobReview[]  @relation("WorkerReviews")
 
@@ -147,6 +223,9 @@ model Job {
   updatedAt      DateTime       @updatedAt
 
   payment        Payment?
+  assignment     BookingAssignment?
+  events         BookingEvent[]
+  supportTickets SupportTicket[]
   dispute        JobDispute?
   notifications  Notification[]
   review         JobReview?
@@ -178,11 +257,217 @@ model Payment {
   razorpayRefundId    String?
 
   status              PaymentStatus @default(PENDING)
+  refunds             PaymentRefund[]
+  walletTransactions  WalletTransaction[]
 
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
 
   @@map("payments")
+}
+
+model CustomerProfile {
+  id                 String    @id @default(cuid())
+  userId             String    @unique
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  email              String?
+  dateOfBirth        DateTime?
+  gender             String?
+  preferredLanguage  String?   @default("en")
+  marketingOptIn     Boolean   @default(false)
+
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@map("customer_profiles")
+}
+
+model CustomerAddress {
+  id          String       @id @default(cuid())
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  label       AddressLabel @default(HOME)
+  line1       String
+  line2       String?
+  landmark    String?
+  city        String
+  state       String
+  pincode     String
+  lat         Float?
+  lng         Float?
+  isDefault   Boolean      @default(false)
+  isActive    Boolean      @default(true)
+
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([userId, isActive])
+  @@index([userId, isDefault])
+  @@map("customer_addresses")
+}
+
+model SavedPaymentMethod {
+  id                 String            @id @default(cuid())
+  userId             String
+  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type               PaymentMethodType
+  provider           String?
+  displayName        String
+  last4              String?
+  tokenReference     String            @unique
+  isDefault          Boolean           @default(false)
+  isActive           Boolean           @default(true)
+
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@index([userId, isActive])
+  @@index([userId, isDefault])
+  @@map("saved_payment_methods")
+}
+
+model CustomerWallet {
+  id                 String             @id @default(cuid())
+  userId             String             @unique
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  balance            Decimal            @default(0)
+  currency           String             @default("INR")
+
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  transactions       WalletTransaction[]
+
+  @@map("customer_wallets")
+}
+
+model WalletTransaction {
+  id                 String          @id @default(cuid())
+  walletId           String
+  wallet             CustomerWallet  @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  paymentId          String?
+  payment            Payment?        @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  txnType            WalletTxnType
+  source             WalletTxnSource
+  amount             Decimal
+  note               String?
+
+  createdAt          DateTime        @default(now())
+
+  @@index([walletId, createdAt(sort: Desc)])
+  @@index([paymentId])
+  @@map("wallet_transactions")
+}
+
+model BookingAssignment {
+  id                 String         @id @default(cuid())
+  jobId              String         @unique
+  job                Job            @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  workerId           String?
+  worker             WorkerProfile? @relation(fields: [workerId], references: [id], onDelete: SetNull)
+
+  assignedAt         DateTime?
+  acceptedAt         DateTime?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  cancelledAt        DateTime?
+  cancelReason       String?
+
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@index([workerId])
+  @@map("booking_assignments")
+}
+
+model PaymentRefund {
+  id                 String       @id @default(cuid())
+  paymentId          String
+  payment            Payment      @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  amount             Decimal
+  reason             String?
+  status             RefundStatus @default(REQUESTED)
+  razorpayRefundId   String?      @unique
+  requestedBy        String?
+  requestedAt        DateTime     @default(now())
+  processedAt        DateTime?
+
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  @@index([paymentId, createdAt(sort: Desc)])
+  @@map("payment_refunds")
+}
+
+model SupportTicket {
+  id                 String             @id @default(cuid())
+  customerId         String
+  customer           User               @relation("CustomerSupportTickets", fields: [customerId], references: [id], onDelete: Cascade)
+
+  jobId              String?
+  job                Job?               @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  category           TicketCategory     @default(OTHER)
+  priority           TicketPriority     @default(MEDIUM)
+  status             TicketStatus       @default(OPEN)
+  subject            String
+  description        String?
+
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  resolvedAt         DateTime?
+
+  messages           SupportTicketMessage[]
+
+  @@index([customerId, status])
+  @@index([jobId])
+  @@map("support_tickets")
+}
+
+model SupportTicketMessage {
+  id                 String           @id @default(cuid())
+  ticketId           String
+  ticket             SupportTicket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  senderType         TicketSenderType
+  senderUserId       String?
+  senderUser         User?            @relation("SupportMessageSender", fields: [senderUserId], references: [id], onDelete: SetNull)
+
+  message            String
+  attachmentUrl      String?
+  createdAt          DateTime         @default(now())
+
+  @@index([ticketId, createdAt])
+  @@index([senderUserId])
+  @@map("support_ticket_messages")
+}
+
+model BookingEvent {
+  id                 String                 @id @default(cuid())
+  jobId              String
+  job                Job                    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  fromStatus         JobStatus?
+  toStatus           JobStatus
+  actorType          BookingEventActorType
+
+  actorUserId        String?
+  actorUser          User?                  @relation("BookingEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  note               String?
+  createdAt          DateTime               @default(now())
+
+  @@index([jobId, createdAt])
+  @@index([actorUserId])
+  @@map("booking_events")
 }
 
 model JobDispute {
@@ -258,4 +543,49 @@ model OtpVerification {
   updatedAt   DateTime @updatedAt
 
   @@map("otp_verifications")
+}
+
+model ServiceCategory {
+  id        String    @id @default(cuid())
+  slug      String    @unique
+  name      String    @unique
+  iconKey   String
+  color     String
+  bg        String
+  sortOrder Int       @default(0)
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  services  Service[]
+
+  @@index([isActive, sortOrder])
+  @@map("service_categories")
+}
+
+model Service {
+  id          String          @id @default(cuid())
+  categoryId  String
+  category    ServiceCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  slug        String          @unique
+  name        String
+  description String
+  price       Decimal
+  originalPrice Decimal?
+  duration    String
+  rating      Float           @default(0)
+  reviews     Int             @default(0)
+  image       String
+  process     String[]
+  deliveryTime String?
+  jobType     JobType?
+  sortOrder   Int             @default(0)
+  isActive    Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([categoryId, isActive, sortOrder])
+  @@index([isActive, sortOrder])
+  @@map("services")
 }

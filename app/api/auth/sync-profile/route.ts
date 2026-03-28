@@ -19,6 +19,10 @@ function normalizePhone(input?: string | null, fallbackUserId?: string) {
   return "";
 }
 
+function isSyntheticPhone(phone: string) {
+  return phone.startsWith("oauth_");
+}
+
 export async function POST(req: NextRequest) {
   try {
     const authHeader = req.headers.get("authorization") ?? "";
@@ -54,7 +58,7 @@ export async function POST(req: NextRequest) {
     const profile = {
       name,
       email,
-      phone,
+      phone: isSyntheticPhone(phone) ? "" : phone,
     };
 
     if (Date.now() < dbSyncPausedUntil) {
