@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { checkRateLimit, locationLookupLimiter } from "@/lib/utils/rate-limit";
 
 type ReverseResult = {
   name: string;
@@ -9,6 +10,32 @@ type ReverseResult = {
 
 const reverseCache = new Map<string, { expiresAt: number; data: ReverseResult }>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 500;
+
+function getClientIp(req: NextRequest) {
+  return (
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("x-real-ip") ||
+    "anon"
+  );
+}
+
+function compactCache() {
+  const now = Date.now();
+  for (const [key, value] of reverseCache.entries()) {
+    if (value.expiresAt <= now) {
+      reverseCache.delete(key);
+    }
+  }
+  if (reverseCache.size < MAX_CACHE_ENTRIES) return;
+  const overflow = reverseCache.size - MAX_CACHE_ENTRIES + 1;
+  let removed = 0;
+  for (const key of reverseCache.keys()) {
+    reverseCache.delete(key);
+    removed += 1;
+    if (removed >= overflow) break;
+  }
+}
 
 function getMapboxKey() {
   return (
@@ -22,6 +49,17 @@ function getMapboxKey() {
 
 export async function GET(req: NextRequest) {
   try {
+    const rl = await checkRateLimit(locationLookupLimiter, getClientIp(req));
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        {
+          status: 429,
+          headers: { "Retry-After": String(rl.retryAfter ?? 60) },
+        }
+      );
+    }
+
     const latRaw = req.nextUrl.searchParams.get("lat") ?? "";
     const lngRaw = req.nextUrl.searchParams.get("lng") ?? "";
 
@@ -57,6 +95,7 @@ export async function GET(req: NextRequest) {
     const placeName = data.features?.[0]?.place_name ?? `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
     const result: ReverseResult = { name: placeName, lat, lng };
 
+    compactCache();
     reverseCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, data: result });
 
     return NextResponse.json(result);

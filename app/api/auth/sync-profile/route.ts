@@ -47,9 +47,8 @@ export async function POST(req: NextRequest) {
       "Customer";
 
     const email = body.email?.trim() || supabaseUser.email || "";
-    const phoneFromBody = body.phone?.trim() || "";
     const phoneFromUser = (supabaseUser.phone as string | undefined) ?? "";
-    const phone = normalizePhone(phoneFromBody || phoneFromUser, supabaseUser.id);
+    const phone = normalizePhone(phoneFromUser, supabaseUser.id);
 
     if (!phone) {
       return NextResponse.json({ error: "Phone resolution failed" }, { status: 400 });
@@ -85,8 +84,13 @@ export async function POST(req: NextRequest) {
           name: true,
           phone: true,
           userType: true,
+          bannedAt: true,
         },
       });
+
+      if (user.bannedAt) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
 
       await prisma.customerProfile.upsert({
         where: { userId: user.id },

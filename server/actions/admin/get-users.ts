@@ -115,21 +115,26 @@ export async function setUserBanned(
 
   if (!userId) return { ok: false, error: "User ID is required.", code: "SERVER_ERROR" };
 
-  if (banned) {
-    // Revoke all active sessions for the user by deleting their OTP records
-    // and wiping their FCM token (prevents silent re-login via refresh cookie).
-    // A proper solution would add a `bannedAt DateTime?` column to User —
-    // tracked as tech debt.
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { phone: true },
-    });
-    if (!user) return { ok: false, error: "User not found.", code: "SERVER_ERROR" };
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { phone: true },
+  });
+  if (!user) return { ok: false, error: "User not found.", code: "SERVER_ERROR" };
 
+  if (banned) {
+    // Revoke active OTP and mark user as banned to block future session mint/refresh.
     await prisma.$transaction([
       prisma.otpVerification.deleteMany({ where: { phone: user.phone } }),
-      prisma.user.update({ where: { id: userId }, data: { fcmToken: null } }),
+      prisma.user.update({
+        where: { id: userId },
+        data: { fcmToken: null, bannedAt: new Date() },
+      }),
     ]);
+  } else {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { bannedAt: null },
+    });
   }
 
   // Audit trail: log who performed this sensitive admin action.

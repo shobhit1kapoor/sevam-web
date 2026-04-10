@@ -1,7 +1,8 @@
 import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
-import { supabaseAdmin } from "@/lib/db/supabase-server";
+import { requireCustomerUserFromRequest } from "@/lib/server/auth/customer-api-auth";
+import { badRequest, getRequestId, internalError, ok } from "@/lib/server/api/http";
 
 type ProfileBody = {
   name?: string;
@@ -12,74 +13,37 @@ type ProfileBody = {
   marketingOptIn?: boolean;
 };
 
-function normalizePhone(input?: string | null, fallbackUserId?: string) {
-  const raw = (input ?? "").trim();
-  if (raw) return raw;
-  if (fallbackUserId) return `oauth_${fallbackUserId}`;
-  return "";
-}
-
-function parseBearerToken(req: NextRequest) {
-  const authHeader = req.headers.get("authorization") ?? "";
-  if (!authHeader.startsWith("Bearer ")) return "";
-  return authHeader.slice(7).trim();
-}
-
-async function ensureCustomerUserFromToken(token: string) {
-  const { data, error } = await supabaseAdmin.auth.getUser(token);
-  if (error || !data?.user) return null;
-
-  const supaUser = data.user;
-  const phone = normalizePhone(supaUser.phone, supaUser.id);
-  if (!phone) return null;
-
-  const name =
-    (supaUser.user_metadata?.full_name as string | undefined)?.trim() ||
-    (supaUser.user_metadata?.name as string | undefined)?.trim() ||
-    "Customer";
-
-  const user = await prisma.user.upsert({
-    where: { phone },
-    create: {
-      phone,
-      name,
-      userType: "CUSTOMER",
-    },
-    update: {
-      name,
-      userType: "CUSTOMER",
-    },
-  });
-
-  return { user, supaUser };
-}
+const ProfileBodySchema = z.object({
+  name: z.string().trim().min(1).max(80).optional(),
+  email: z.union([z.string().trim().email().max(254), z.literal(""), z.undefined()]),
+  dateOfBirth: z.union([z.string().trim().max(32), z.null(), z.undefined()]),
+  gender: z.union([z.string().trim().max(32), z.null(), z.undefined()]),
+  preferredLanguage: z.union([z.string().trim().min(2).max(10), z.null(), z.undefined()]),
+  marketingOptIn: z.boolean().optional(),
+});
 
 export async function GET(req: NextRequest) {
+  const requestId = getRequestId(req);
   try {
-    const token = parseBearerToken(req);
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireCustomerUserFromRequest(req, requestId);
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const resolved = await ensureCustomerUserFromToken(token);
-    if (!resolved) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const { user, supaUser } = resolved;
+    const { user, supabaseUser } = auth;
 
     const profile = await prisma.customerProfile.upsert({
       where: { userId: user.id },
       create: {
         userId: user.id,
-        email: supaUser.email ?? null,
+        email: supabaseUser.email ?? null,
       },
       update: {
-        email: supaUser.email ?? undefined,
+        email: supabaseUser.email ?? undefined,
       },
     });
 
-    return NextResponse.json({
+    return ok({
       user: {
         id: user.id,
         name: user.name,
@@ -93,26 +57,27 @@ export async function GET(req: NextRequest) {
         preferredLanguage: profile.preferredLanguage,
         marketingOptIn: profile.marketingOptIn,
       },
-    });
+    }, requestId);
   } catch {
-    return NextResponse.json({ error: "Failed to load profile" }, { status: 500 });
+    return internalError("Failed to load profile", requestId);
   }
 }
 
 export async function PUT(req: NextRequest) {
+  const requestId = getRequestId(req);
   try {
-    const token = parseBearerToken(req);
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireCustomerUserFromRequest(req, requestId);
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const resolved = await ensureCustomerUserFromToken(token);
-    if (!resolved) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user } = auth;
+    const payload = (await req.json().catch(() => ({}))) as ProfileBody;
+    const parsedBody = ProfileBodySchema.safeParse(payload);
+    if (!parsedBody.success) {
+      return badRequest(parsedBody.error.issues[0]?.message ?? "Invalid payload", requestId);
     }
-
-    const { user } = resolved;
-    const body = (await req.json().catch(() => ({}))) as ProfileBody;
+    const body = parsedBody.data;
 
     const name = body.name?.trim();
     if (name) {
@@ -122,7 +87,16 @@ export async function PUT(req: NextRequest) {
       });
     }
 
-    const dateOfBirth = body.dateOfBirth ? new Date(body.dateOfBirth) : null;
+    const dateOfBirthRaw = typeof body.dateOfBirth === "string" ? body.dateOfBirth.trim() : "";
+    let dateOfBirth: Date | null = null;
+
+    if (dateOfBirthRaw) {
+      const parsedDate = new Date(dateOfBirthRaw);
+      if (Number.isNaN(parsedDate.getTime())) {
+        return badRequest("Invalid dateOfBirth", requestId);
+      }
+      dateOfBirth = parsedDate;
+    }
 
     const profile = await prisma.customerProfile.upsert({
       where: { userId: user.id },
@@ -143,7 +117,7 @@ export async function PUT(req: NextRequest) {
       },
     });
 
-    return NextResponse.json({
+    return ok({
       ok: true,
       profile: {
         email: profile.email,
@@ -152,8 +126,8 @@ export async function PUT(req: NextRequest) {
         preferredLanguage: profile.preferredLanguage,
         marketingOptIn: profile.marketingOptIn,
       },
-    });
+    }, requestId);
   } catch {
-    return NextResponse.json({ error: "Failed to update profile" }, { status: 500 });
+    return internalError("Failed to update profile", requestId);
   }
 }

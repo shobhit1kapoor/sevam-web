@@ -139,12 +139,13 @@ export async function refreshSession(): Promise<SessionPayload | null> {
   const { prisma } = await import("@/lib/db/prisma");
   const user = await prisma.user.findUnique({
     where: { id: refreshPayload.userId },
-    // TODO: add bannedAt DateTime? to User model and check here once migrated.
-    // select: { id: true, phone: true, userType: true, bannedAt: true },
-    select: { id: true, phone: true, userType: true },
+    select: { id: true, phone: true, userType: true, bannedAt: true },
   });
   if (!user) return null;
-  // TODO: when bannedAt column is added: if (user.bannedAt) return null;
+  if (user.bannedAt) {
+    await clearSessionCookies();
+    return null;
+  }
 
   // Defensive: validate the DB value matches the expected enum (same guard as verifyOtp).
   if (!["CUSTOMER", "WORKER", "ADMIN"].includes(user.userType)) {

@@ -37,7 +37,7 @@ const _redis = (() => {
 
 function makeSliding(
   tokens: number,
-  window: `${number} h`,
+  window: `${number} h` | `${number} m`,
   prefix: string
 ): Ratelimit | null {
   if (!_redis) return null;
@@ -59,6 +59,10 @@ export const customerJobLimiter   = makeSliding(10, "1 h", "rl:customer:jobs");
 export const workerLocationLimiter = makeSliding(50, "1 h", "rl:worker:location");
 /** Session refresh: max 30 requests per IP per hour */
 export const sessionRefreshLimiter = makeSliding(30, "1 h", "rl:session:refresh");
+/** Customer cart API: max 240 requests per IP per hour */
+export const customerCartLimiter = makeSliding(240, "1 h", "rl:customer:cart");
+/** Public location lookups: max 300 requests per IP per hour */
+export const locationLookupLimiter = makeSliding(300, "1 h", "rl:location:lookup");
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 

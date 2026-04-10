@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { checkRateLimit, locationLookupLimiter } from "@/lib/utils/rate-limit";
 
 type SearchResult = {
   name: string;
@@ -9,6 +10,33 @@ type SearchResult = {
 
 const searchCache = new Map<string, { expiresAt: number; data: SearchResult[] }>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 500;
+const MAX_QUERY_LENGTH = 120;
+
+function getClientIp(req: NextRequest) {
+  return (
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("x-real-ip") ||
+    "anon"
+  );
+}
+
+function compactCache() {
+  const now = Date.now();
+  for (const [key, value] of searchCache.entries()) {
+    if (value.expiresAt <= now) {
+      searchCache.delete(key);
+    }
+  }
+  if (searchCache.size < MAX_CACHE_ENTRIES) return;
+  const overflow = searchCache.size - MAX_CACHE_ENTRIES + 1;
+  let removed = 0;
+  for (const key of searchCache.keys()) {
+    searchCache.delete(key);
+    removed += 1;
+    if (removed >= overflow) break;
+  }
+}
 
 function getMapboxKey() {
   return (
@@ -22,10 +50,25 @@ function getMapboxKey() {
 
 export async function GET(req: NextRequest) {
   try {
+    const rl = await checkRateLimit(locationLookupLimiter, getClientIp(req));
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        {
+          status: 429,
+          headers: { "Retry-After": String(rl.retryAfter ?? 60) },
+        }
+      );
+    }
+
     const query = req.nextUrl.searchParams.get("q")?.trim() ?? "";
 
     if (query.length < 3) {
       return NextResponse.json([]);
+    }
+
+    if (query.length > MAX_QUERY_LENGTH) {
+      return NextResponse.json({ error: "Query too long" }, { status: 400 });
     }
 
     const cacheKey = query.toLowerCase();
@@ -59,6 +102,7 @@ export async function GET(req: NextRequest) {
       }))
       .filter((place) => Boolean(place.name) && Number.isFinite(place.lat) && Number.isFinite(place.lng));
 
+    compactCache();
     searchCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, data: results });
 
     return NextResponse.json(results);

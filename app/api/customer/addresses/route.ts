@@ -1,8 +1,9 @@
 import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
+import { z } from "zod";
 import { AddressLabel } from "@/lib/generated/prisma/client";
 import { prisma } from "@/lib/db/prisma";
-import { supabaseAdmin } from "@/lib/db/supabase-server";
+import { requireCustomerUserFromRequest } from "@/lib/server/auth/customer-api-auth";
+import { badRequest, getRequestId, internalError, notFound, ok } from "@/lib/server/api/http";
 
 type AddressBody = {
   id?: string;
@@ -18,48 +19,34 @@ type AddressBody = {
   isDefault?: boolean;
 };
 
-function normalizePhone(input?: string | null, fallbackUserId?: string) {
-  const raw = (input ?? "").trim();
-  if (raw) return raw;
-  if (fallbackUserId) return `oauth_${fallbackUserId}`;
-  return "";
-}
+const PincodeSchema = z.string().trim().regex(/^\d{6}$/, "pincode must be a 6 digit code");
 
-function parseBearerToken(req: NextRequest) {
-  const authHeader = req.headers.get("authorization") ?? "";
-  if (!authHeader.startsWith("Bearer ")) return "";
-  return authHeader.slice(7).trim();
-}
+const AddressCreateSchema = z.object({
+  label: z.enum(["HOME", "OFFICE", "OTHER"]).optional(),
+  line1: z.string().trim().min(3).max(160),
+  line2: z.string().trim().max(160).optional(),
+  landmark: z.string().trim().max(160).optional(),
+  city: z.string().trim().min(2).max(80),
+  state: z.string().trim().min(2).max(80),
+  pincode: PincodeSchema,
+  lat: z.number().finite().min(-90).max(90).optional(),
+  lng: z.number().finite().min(-180).max(180).optional(),
+  isDefault: z.boolean().optional(),
+});
 
-async function ensureCustomerUserFromToken(token: string) {
-  const { data, error } = await supabaseAdmin.auth.getUser(token);
-  if (error || !data?.user) return null;
-
-  const supaUser = data.user;
-  const phone = normalizePhone(supaUser.phone, supaUser.id);
-  if (!phone) return null;
-
-  const name =
-    (supaUser.user_metadata?.full_name as string | undefined)?.trim() ||
-    (supaUser.user_metadata?.name as string | undefined)?.trim() ||
-    "Customer";
-
-  const user = await prisma.user.upsert({
-    where: { phone },
-    create: {
-      phone,
-      name,
-      userType: "CUSTOMER",
-    },
-    update: {
-      name,
-      userType: "CUSTOMER",
-    },
-    select: { id: true },
-  });
-
-  return user;
-}
+const AddressUpdateSchema = z.object({
+  id: z.string().trim().min(1),
+  label: z.enum(["HOME", "OFFICE", "OTHER"]).optional(),
+  line1: z.string().trim().min(3).max(160).optional(),
+  line2: z.string().trim().max(160).optional(),
+  landmark: z.string().trim().max(160).optional(),
+  city: z.string().trim().min(2).max(80).optional(),
+  state: z.string().trim().min(2).max(80).optional(),
+  pincode: PincodeSchema.optional(),
+  lat: z.number().finite().min(-90).max(90).optional(),
+  lng: z.number().finite().min(-180).max(180).optional(),
+  isDefault: z.boolean().optional(),
+});
 
 function normalizeLabel(label?: string): AddressLabel {
   if (label === "OFFICE") return AddressLabel.OFFICE;
@@ -68,16 +55,14 @@ function normalizeLabel(label?: string): AddressLabel {
 }
 
 export async function GET(req: NextRequest) {
+  const requestId = getRequestId(req);
   try {
-    const token = parseBearerToken(req);
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireCustomerUserFromRequest(req, requestId);
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const user = await ensureCustomerUserFromToken(token);
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { user } = auth;
 
     const addresses = await prisma.customerAddress.findMany({
       where: {
@@ -100,37 +85,33 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    return NextResponse.json({ addresses });
+    return ok({ addresses }, requestId);
   } catch {
-    return NextResponse.json({ error: "Failed to load addresses" }, { status: 500 });
+    return internalError("Failed to load addresses", requestId);
   }
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = getRequestId(req);
   try {
-    const token = parseBearerToken(req);
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireCustomerUserFromRequest(req, requestId);
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const user = await ensureCustomerUserFromToken(token);
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { user } = auth;
+
+    const payload = (await req.json().catch(() => ({}))) as AddressBody;
+    const parsedBody = AddressCreateSchema.safeParse(payload);
+    if (!parsedBody.success) {
+      return badRequest(parsedBody.error.issues[0]?.message ?? "Invalid payload", requestId);
     }
+    const body = parsedBody.data;
 
-    const body = (await req.json().catch(() => ({}))) as AddressBody;
-
-    const line1 = body.line1?.trim();
-    const city = body.city?.trim();
-    const state = body.state?.trim();
-    const pincode = body.pincode?.trim();
-
-    if (!line1 || !city || !state || !pincode) {
-      return NextResponse.json(
-        { error: "line1, city, state, and pincode are required" },
-        { status: 400 }
-      );
-    }
+    const line1 = body.line1;
+    const city = body.city;
+    const state = body.state;
+    const pincode = body.pincode;
 
     const label = normalizeLabel(body.label);
     const line2 = body.line2?.trim() || null;
@@ -177,30 +158,29 @@ export async function POST(req: NextRequest) {
       });
     });
 
-    return NextResponse.json({ address: created }, { status: 201 });
+    return ok({ address: created }, requestId, 201);
   } catch {
-    return NextResponse.json({ error: "Failed to create address" }, { status: 500 });
+    return internalError("Failed to create address", requestId);
   }
 }
 
 export async function PUT(req: NextRequest) {
+  const requestId = getRequestId(req);
   try {
-    const token = parseBearerToken(req);
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireCustomerUserFromRequest(req, requestId);
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const user = await ensureCustomerUserFromToken(token);
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { user } = auth;
 
-    const body = (await req.json().catch(() => ({}))) as AddressBody;
-    const id = body.id?.trim();
-
-    if (!id) {
-      return NextResponse.json({ error: "Address id is required" }, { status: 400 });
+    const payload = (await req.json().catch(() => ({}))) as AddressBody;
+    const parsedBody = AddressUpdateSchema.safeParse(payload);
+    if (!parsedBody.success) {
+      return badRequest(parsedBody.error.issues[0]?.message ?? "Invalid payload", requestId);
     }
+    const body = parsedBody.data;
+    const id = body.id;
 
     const existing = await prisma.customerAddress.findFirst({
       where: {
@@ -212,7 +192,7 @@ export async function PUT(req: NextRequest) {
     });
 
     if (!existing) {
-      return NextResponse.json({ error: "Address not found" }, { status: 404 });
+      return notFound("Address not found", requestId);
     }
 
     const updates: {
@@ -268,29 +248,27 @@ export async function PUT(req: NextRequest) {
       });
     });
 
-    return NextResponse.json({ address: updated });
+    return ok({ address: updated }, requestId);
   } catch {
-    return NextResponse.json({ error: "Failed to update address" }, { status: 500 });
+    return internalError("Failed to update address", requestId);
   }
 }
 
 export async function DELETE(req: NextRequest) {
+  const requestId = getRequestId(req);
   try {
-    const token = parseBearerToken(req);
-    if (!token) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireCustomerUserFromRequest(req, requestId);
+    if (!auth.ok) {
+      return auth.response;
     }
 
-    const user = await ensureCustomerUserFromToken(token);
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { user } = auth;
 
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id")?.trim();
 
     if (!id) {
-      return NextResponse.json({ error: "Address id is required" }, { status: 400 });
+      return badRequest("Address id is required", requestId);
     }
 
     const existing = await prisma.customerAddress.findFirst({
@@ -303,7 +281,7 @@ export async function DELETE(req: NextRequest) {
     });
 
     if (!existing) {
-      return NextResponse.json({ error: "Address not found" }, { status: 404 });
+      return notFound("Address not found", requestId);
     }
 
     await prisma.customerAddress.update({
@@ -311,8 +289,8 @@ export async function DELETE(req: NextRequest) {
       data: { isActive: false, isDefault: false },
     });
 
-    return NextResponse.json({ ok: true });
+    return ok({ ok: true }, requestId);
   } catch {
-    return NextResponse.json({ error: "Failed to delete address" }, { status: 500 });
+    return internalError("Failed to delete address", requestId);
   }
 }

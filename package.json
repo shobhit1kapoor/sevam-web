@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:checkout-api": "node scripts/test-checkout-api.mjs"
+    "test:checkout-api": "node scripts/test-checkout-api.mjs",
+    "test:auth-ban-api": "node scripts/test-auth-ban-api.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

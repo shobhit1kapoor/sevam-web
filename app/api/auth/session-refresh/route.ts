@@ -72,11 +72,18 @@ export async function POST(req: NextRequest) {
     // refreshPayload already verified above — use its userId directly
     const user = await prisma.user.findUnique({
       where:  { id: refreshPayload.userId },
-      select: { id: true, phone: true, userType: true },
+      select: { id: true, phone: true, userType: true, bannedAt: true },
     });
 
     if (!user) {
       return NextResponse.json(null, { status: 404 });
+    }
+
+    if (user.bannedAt) {
+      const res = NextResponse.json(null, { status: 403 });
+      res.cookies.delete("sevam_session");
+      res.cookies.delete("sevam_refresh");
+      return res;
     }
 
     const payload: SessionPayload = {

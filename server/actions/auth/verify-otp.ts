@@ -116,10 +116,18 @@ export async function verifyOtp(
         where: { phone },
         create: { phone, userType: "CUSTOMER" },
         update: {},
-        select: { id: true, phone: true, userType: true },
+        select: { id: true, phone: true, userType: true, bannedAt: true },
       }),
       prisma.otpVerification.delete({ where: { phone } }),
     ]);
+
+    if (user.bannedAt) {
+      return {
+        ok: false,
+        error: "Your account is blocked. Please contact support.",
+        code: "SERVER_ERROR",
+      };
+    }
 
     // ── 5. Mint session + set cookies + audit log ──────────────────────
     // Defensive: ensure the DB value is a recognised UserType before casting.
